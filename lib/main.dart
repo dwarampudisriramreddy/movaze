@@ -2,9 +2,12 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:vibration/vibration.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  MobileAds.instance.initialize();
   runApp(const MovazeApp());
 }
 
@@ -69,6 +72,54 @@ class MazeCell {
   bool right = true;
   bool bottom = true;
   bool left = true;
+}
+
+class TopBanner extends StatefulWidget {
+  const TopBanner({super.key});
+
+  @override
+  State<TopBanner> createState() => _TopBannerState();
+}
+
+class _TopBannerState extends State<TopBanner> {
+  static const String _adUnitId = 'ca-app-pub-3464757507183621/3007304227';
+
+  BannerAd? _ad;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ad = BannerAd(
+      adUnitId: _adUnitId,
+      size: AdSize.banner,
+      request: const AdRequest(),
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          if (mounted) setState(() => _loaded = true);
+        },
+        onAdFailedToLoad: (ad, error) {
+          ad.dispose();
+          if (mounted) setState(() => _loaded = false);
+        },
+      ),
+    )..load();
+  }
+
+  @override
+  void dispose() {
+    _ad?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_loaded || _ad == null) return const SizedBox.shrink();
+    return Container(
+      alignment: Alignment.center,
+      child: AdWidget(ad: _ad!),
+    );
+  }
 }
 
 class Enemy {
@@ -1039,6 +1090,7 @@ class _MazeGameState extends State<MazeGame> {
           onKeyEvent: _handleKey,
           child: Column(
             children: [
+              const TopBanner(),
               Padding(
                 padding: const EdgeInsets.only(top: 12, left: 16, right: 16),
                 child: Row(

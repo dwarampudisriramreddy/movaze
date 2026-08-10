@@ -26,11 +26,20 @@ jobs:
         with:
           channel: stable
 
-      - name: Build Debug APK
-        run: flutter build apk --debug
+      - name: Build Release APK
+        run: flutter build apk --release
 
-      - name: Upload Debug APK
+      - name: Build Release AAB
+        run: flutter build appbundle --release
+
+      - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
+          name: app-release
           path: build/app/outputs/flutter-apk/*.apk
+
+      - name: Upload Release AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-aab
+          path: build/app/outputs/bundle/release/*.aab
