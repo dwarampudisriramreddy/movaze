@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
 
 void main() {
@@ -874,6 +875,7 @@ class MazeGame extends StatefulWidget {
 class _MazeGameState extends State<MazeGame> {
   late Maze _maze;
   int _level = 1;
+  int _maxLevel = 1;
   int _steps = 0;
   bool _solving = false;
   bool _vibrationEnabled = true;
@@ -886,7 +888,7 @@ class _MazeGameState extends State<MazeGame> {
   @override
   void initState() {
     super.initState();
-    _newMaze();
+    _loadProgress();
     _focusNode.requestFocus();
   }
 
@@ -901,6 +903,31 @@ class _MazeGameState extends State<MazeGame> {
   int get _enemyIntervalMs {
     final ms = 520 - _level * 2;
     return ms < 300 ? 300 : ms;
+  }
+
+  Future<void> _loadProgress() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedMax = prefs.getInt('maxLevel') ?? 1;
+    final saved = prefs.getInt('level') ?? savedMax;
+    if (!mounted) return;
+    setState(() {
+      _maxLevel = max(savedMax, 1);
+      _level = saved.clamp(1, _maxLevel);
+    });
+    _newMaze();
+  }
+
+  Future<void> _saveProgress() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('level', _level);
+    await prefs.setInt('maxLevel', _maxLevel);
+  }
+
+  void _goToLevel(int level) {
+    if (level < 1 || level > _maxLevel || level == _level) return;
+    setState(() => _level = level);
+    _saveProgress();
+    _newMaze();
   }
 
   void _newMaze() {
@@ -1050,7 +1077,11 @@ class _MazeGameState extends State<MazeGame> {
     ).then((replay) {
       setState(() {
         _solving = false;
-        if (replay != true) _level++;
+        if (replay != true) {
+          if (_level >= _maxLevel) _maxLevel++;
+          _level++;
+          _saveProgress();
+        }
         _newMaze();
       });
       _focusNode.requestFocus();
@@ -1096,14 +1127,35 @@ class _MazeGameState extends State<MazeGame> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'LEVEL $_level',
-                      style: TextStyle(
-                        color: scheme.onSurface,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 2,
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          onPressed: _level > 1
+                              ? () => _goToLevel(_level - 1)
+                              : null,
+                          icon: Icon(Icons.arrow_back, color: scheme.onSurface),
+                          disabledColor: scheme.onSurface.withValues(alpha: 0.35),
+                          tooltip: 'Previous level',
+                        ),
+                        Text(
+                          'LEVEL $_level',
+                          style: TextStyle(
+                            color: scheme.onSurface,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 2,
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: _level < _maxLevel
+                              ? () => _goToLevel(_level + 1)
+                              : null,
+                          icon: Icon(Icons.arrow_forward, color: scheme.onSurface),
+                          disabledColor: scheme.onSurface.withValues(alpha: 0.35),
+                          tooltip: 'Next level',
+                        ),
+                      ],
                     ),
                     Text(
                       'MOVAZE',
