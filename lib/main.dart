@@ -115,10 +115,10 @@ class _TopBannerState extends State<TopBanner> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_loaded || _ad == null) return const SizedBox.shrink();
-    return Container(
-      alignment: Alignment.center,
-      child: AdWidget(ad: _ad!),
+    final ad = _loaded ? _ad : null;
+    return SizedBox(
+      height: 60,
+      child: Center(child: ad == null ? null : AdWidget(ad: ad)),
     );
   }
 }
@@ -876,7 +876,6 @@ class _MazeGameState extends State<MazeGame> {
   late Maze _maze;
   int _level = 1;
   int _maxLevel = 1;
-  int _steps = 0;
   bool _solving = false;
   bool _vibrationEnabled = true;
   Timer? _enemyTimer;
@@ -935,7 +934,6 @@ class _MazeGameState extends State<MazeGame> {
       _mazeSizeForLevel(_level),
       enemyCount: _enemyCountForLevel(_level),
     );
-    _steps = 0;
     _revision.value++;
     _startEnemyTimer();
   }
@@ -959,7 +957,6 @@ class _MazeGameState extends State<MazeGame> {
     if (_solving) return;
     if (!_maze.move(dr, dc)) return;
     setState(() {
-      _steps++;
       _revision.value++;
     });
     _vibrate();
@@ -1048,11 +1045,6 @@ class _MazeGameState extends State<MazeGame> {
             color: scheme.onSurface,
             fontWeight: FontWeight.bold,
           ),
-        ),
-        content: Text(
-          'Solved in $_steps steps.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: scheme.onSurface),
         ),
         actions: [
           TextButton(
@@ -1237,7 +1229,6 @@ class _MazeGameState extends State<MazeGame> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 24),
                 child: DPad(
-                  steps: _steps,
                   onUp: () => _move(-1, 0),
                   onDown: () => _move(1, 0),
                   onLeft: () => _move(0, -1),
@@ -1255,14 +1246,12 @@ class _MazeGameState extends State<MazeGame> {
 class DPad extends StatelessWidget {
   const DPad({
     super.key,
-    required this.steps,
     required this.onUp,
     required this.onDown,
     required this.onLeft,
     required this.onRight,
   });
 
-  final int steps;
   final VoidCallback onUp;
   final VoidCallback onDown;
   final VoidCallback onLeft;
@@ -1290,16 +1279,6 @@ class DPad extends StatelessWidget {
       decoration: BoxDecoration(
         color: scheme.surface,
         border: Border.all(color: scheme.onSurface, width: 2),
-      ),
-      child: Center(
-        child: Text(
-          '$steps',
-          style: TextStyle(
-            color: scheme.onSurface,
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
       ),
     );
   }
