@@ -127,8 +127,11 @@ class Enemy {
   int row;
   int col;
   int patrolIndex;
+  int dir;
+  double pace;
 
-  Enemy(this.row, this.col, this.patrolIndex);
+  Enemy(this.row, this.col, this.patrolIndex,
+      {this.dir = 1, this.pace = 0.6});
 }
 
 class Maze {
@@ -202,7 +205,13 @@ class Maze {
       final idx = _routeIndexOf(r, c);
       if (idx == -1) continue;
       placed.add(id);
-      enemies.add(Enemy(r, c, idx));
+      enemies.add(Enemy(
+        r,
+        c,
+        idx,
+        dir: rng.nextBool() ? 1 : -1,
+        pace: 0.5 + rng.nextDouble() * 0.4,
+      ));
     }
   }
 
@@ -767,11 +776,53 @@ class Maze {
     return null;
   }
 
-  void patrolEnemy(Enemy e) {
-    e.patrolIndex = (e.patrolIndex + 1) % patrolRoute.length;
-    final (nr, nc) = patrolRoute[e.patrolIndex];
-    e.row = nr;
-    e.col = nc;
+  int _distance(int fromR, int fromC, int toR, int toC) {
+    if (fromR == toR && fromC == toC) return 0;
+    final dist = List.generate(size, (_) => List<int>.filled(size, -1));
+    final queue = <(int, int)>[(fromR, fromC)];
+    dist[fromR][fromC] = 0;
+    while (queue.isNotEmpty) {
+      final (r, c) = queue.removeAt(0);
+      final cell = cells[r][c];
+      for (final (nr, nc) in [
+        if (!cell.top) (r - 1, c),
+        if (!cell.right) (r, c + 1),
+        if (!cell.bottom) (r + 1, c),
+        if (!cell.left) (r, c - 1),
+      ]) {
+        if (dist[nr][nc] != -1) continue;
+        if (nr == toR && nc == toC) return dist[r][c] + 1;
+        dist[nr][nc] = dist[r][c] + 1;
+        queue.add((nr, nc));
+      }
+    }
+    return -1;
+  }
+
+  /// Advances one enemy: chases the player when in sight range, otherwise
+  /// patrols the backbone at an independent random pace so enemies desync
+  /// instead of marching in a single train.
+  void advanceEnemy(
+    Enemy e,
+    int playerRow,
+    int playerCol, {
+    required Random rng,
+    int chaseRange = 6,
+  }) {
+    if (_distance(e.row, e.col, playerRow, playerCol) <= chaseRange) {
+      final step = nextStepToward(e.row, e.col, playerRow, playerCol);
+      if (step != null) {
+        e.row = step.$1;
+        e.col = step.$2;
+        return;
+      }
+    }
+    if (rng.nextDouble() < e.pace) {
+      e.patrolIndex = (e.patrolIndex + e.dir) % patrolRoute.length;
+      final (nr, nc) = patrolRoute[e.patrolIndex];
+      e.row = nr;
+      e.col = nc;
+    }
   }
 }
 
@@ -978,10 +1029,20 @@ class _MazeGameState extends State<MazeGame> {
         (e) => e.row == _maze.playerRow && e.col == _maze.playerCol,
       );
 
+  int _chaseRangeForLevel(int level) => min(10, 4 + level);
+
   bool _advanceEnemies() {
     if (_maze.enemies.isEmpty) return false;
+    final rng = Random();
+    final chaseRange = _chaseRangeForLevel(_level);
     for (final e in _maze.enemies) {
-      _maze.patrolEnemy(e);
+      _maze.advanceEnemy(
+        e,
+        _maze.playerRow,
+        _maze.playerCol,
+        rng: rng,
+        chaseRange: chaseRange,
+      );
     }
     _revision.value++;
     return _playerOnEnemy();

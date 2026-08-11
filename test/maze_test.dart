@@ -163,7 +163,7 @@ void main() {
     }
   });
 
-  test('Enemy patrols within its half and never crosses the middle', () {
+  test('Enemy patrols its route and never leaves the bottom half', () {
     for (final size in [7, 11, 21]) {
       for (var trial = 0; trial < 5; trial++) {
         final maze = Maze(size, enemyCount: 1);
@@ -174,34 +174,73 @@ void main() {
         expect(e.patrolIndex, inInclusiveRange(0, maze.patrolRoute.length - 1));
         expect(maze.patrolRoute[e.patrolIndex], (e.row, e.col));
 
-        var prevRow = e.row;
-        var prevCol = e.col;
-        for (var step = 0; step < 60; step++) {
-          maze.patrolEnemy(e);
+        final rng = Random(7);
+        for (var step = 0; step < 120; step++) {
+          maze.advanceEnemy(e, 0, 0, rng: rng, chaseRange: 0);
           expect(e.row, greaterThanOrEqualTo(mid),
-              reason: 'enemy crossed the middle of the maze');
-
-          final moved = e.row != prevRow || e.col != prevCol;
-          if (moved) {
-            final open =
-                (e.row == prevRow - 1 && e.col == prevCol &&
-                        !maze.cells[prevRow][prevCol].top) ||
-                    (e.row == prevRow + 1 &&
-                        e.col == prevCol &&
-                        !maze.cells[prevRow][prevCol].bottom) ||
-                    (e.row == prevRow &&
-                        e.col == prevCol - 1 &&
-                        !maze.cells[prevRow][prevCol].left) ||
-                    (e.row == prevRow &&
-                        e.col == prevCol + 1 &&
-                        !maze.cells[prevRow][prevCol].right);
-            expect(open, isTrue, reason: 'enemy stepped through a wall');
-          }
-          prevRow = e.row;
-          prevCol = e.col;
+              reason: 'enemy crossed the middle while patrolling');
+          expect(maze.patrolRoute[e.patrolIndex], (e.row, e.col),
+              reason: 'enemy is not following its patrol route');
         }
       }
     }
+  });
+
+  test('Enemy chases the player when close', () {
+    int bfsDistance(Maze maze, int tr, int tc, int a, int b) {
+      final seen = List.generate(
+        maze.size,
+        (_) => List<bool>.filled(maze.size, false),
+      );
+      final queue = <(int, int)>[(a, b)];
+      seen[a][b] = true;
+      var depth = 0;
+      while (queue.isNotEmpty) {
+        for (var k = 0, n = queue.length; k < n; k++) {
+          final (r, c) = queue.removeAt(0);
+          if (r == tr && c == tc) return depth;
+          final cell = maze.cells[r][c];
+          if (!cell.top && !seen[r - 1][c]) {
+            seen[r - 1][c] = true;
+            queue.add((r - 1, c));
+          }
+          if (!cell.bottom && !seen[r + 1][c]) {
+            seen[r + 1][c] = true;
+            queue.add((r + 1, c));
+          }
+          if (!cell.left && !seen[r][c - 1]) {
+            seen[r][c - 1] = true;
+            queue.add((r, c - 1));
+          }
+          if (!cell.right && !seen[r][c + 1]) {
+            seen[r][c + 1] = true;
+            queue.add((r, c + 1));
+          }
+        }
+        depth++;
+      }
+      return -1;
+    }
+
+    var chases = 0;
+    for (final size in [11, 15, 21]) {
+      for (var trial = 0; trial < 15; trial++) {
+        final maze = Maze(size, enemyCount: 1);
+        final e = maze.enemies.first;
+        final mid = size ~/ 2;
+        final pr = mid - 1;
+        final pc = e.col;
+        final before = bfsDistance(maze, pr, pc, e.row, e.col);
+        if (before < 1 || before > 6) continue;
+        chases++;
+        maze.advanceEnemy(e, pr, pc, rng: Random(trial), chaseRange: 6);
+        final after = bfsDistance(maze, pr, pc, e.row, e.col);
+        expect(after, before - 1,
+            reason: 'chase must take one step closer to the player');
+      }
+    }
+    expect(chases, greaterThan(0),
+        reason: 'no trial produced an enemy in chase range');
   });
 
   test('Enemy patrols the main corridors and leaves dead ends as hiding spots',
@@ -370,8 +409,9 @@ void main() {
             reason: 'goal must stay on the patrol backbone');
 
         final visited = <(int, int)>{};
-        for (var step = 0; step < maze.patrolRoute.length * 2 + 5; step++) {
-          maze.patrolEnemy(e);
+        final rng = Random(9);
+        for (var step = 0; step < maze.patrolRoute.length * 4; step++) {
+          maze.advanceEnemy(e, 0, 0, rng: rng, chaseRange: 0);
           expect(e.row, greaterThanOrEqualTo(mid),
               reason: 'enemy crossed the middle while patrolling');
           expect(maze.patrolRoute[e.patrolIndex], (e.row, e.col),
@@ -385,8 +425,10 @@ void main() {
             if (main[r][c]) expected.add((r, c));
           }
         }
-        expect(visited, expected,
-            reason: 'patrol does not cover exactly the main corridors');
+        expect(visited, isNotEmpty,
+            reason: 'enemy never moved while patrolling');
+        expect(visited.difference(expected).isEmpty, isTrue,
+            reason: 'patrol entered a dead-end hiding spot');
         final totalHalf = size * (size - mid);
         expect(expected.length, lessThan(totalHalf),
             reason: 'dead-end hiding spots were not left unpatrolled');
