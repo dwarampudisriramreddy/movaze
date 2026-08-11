@@ -776,47 +776,10 @@ class Maze {
     return null;
   }
 
-  int _distance(int fromR, int fromC, int toR, int toC) {
-    if (fromR == toR && fromC == toC) return 0;
-    final dist = List.generate(size, (_) => List<int>.filled(size, -1));
-    final queue = <(int, int)>[(fromR, fromC)];
-    dist[fromR][fromC] = 0;
-    while (queue.isNotEmpty) {
-      final (r, c) = queue.removeAt(0);
-      final cell = cells[r][c];
-      for (final (nr, nc) in [
-        if (!cell.top) (r - 1, c),
-        if (!cell.right) (r, c + 1),
-        if (!cell.bottom) (r + 1, c),
-        if (!cell.left) (r, c - 1),
-      ]) {
-        if (dist[nr][nc] != -1) continue;
-        if (nr == toR && nc == toC) return dist[r][c] + 1;
-        dist[nr][nc] = dist[r][c] + 1;
-        queue.add((nr, nc));
-      }
-    }
-    return -1;
-  }
-
-  /// Advances one enemy: chases the player when in sight range, otherwise
-  /// patrols the backbone at an independent random pace so enemies desync
-  /// instead of marching in a single train.
-  void advanceEnemy(
-    Enemy e,
-    int playerRow,
-    int playerCol, {
-    required Random rng,
-    int chaseRange = 6,
-  }) {
-    if (_distance(e.row, e.col, playerRow, playerCol) <= chaseRange) {
-      final step = nextStepToward(e.row, e.col, playerRow, playerCol);
-      if (step != null) {
-        e.row = step.$1;
-        e.col = step.$2;
-        return;
-      }
-    }
+  /// Advances one enemy: patrols the backbone at an independent random pace
+  /// so enemies desync and cover different regions instead of marching as a
+  /// single synchronized train. Off-route dead ends stay safe hiding spots.
+  void advanceEnemy(Enemy e, {required Random rng}) {
     if (rng.nextDouble() < e.pace) {
       e.patrolIndex = (e.patrolIndex + e.dir) % patrolRoute.length;
       final (nr, nc) = patrolRoute[e.patrolIndex];
@@ -938,6 +901,10 @@ class _MazeGameState extends State<MazeGame> {
   @override
   void initState() {
     super.initState();
+    _maze = Maze(
+      _mazeSizeForLevel(_level),
+      enemyCount: _enemyCountForLevel(_level),
+    );
     _loadProgress();
     _focusNode.requestFocus();
   }
@@ -1029,20 +996,11 @@ class _MazeGameState extends State<MazeGame> {
         (e) => e.row == _maze.playerRow && e.col == _maze.playerCol,
       );
 
-  int _chaseRangeForLevel(int level) => min(10, 4 + level);
-
   bool _advanceEnemies() {
     if (_maze.enemies.isEmpty) return false;
     final rng = Random();
-    final chaseRange = _chaseRangeForLevel(_level);
     for (final e in _maze.enemies) {
-      _maze.advanceEnemy(
-        e,
-        _maze.playerRow,
-        _maze.playerCol,
-        rng: rng,
-        chaseRange: chaseRange,
-      );
+      _maze.advanceEnemy(e, rng: rng);
     }
     _revision.value++;
     return _playerOnEnemy();
@@ -1322,21 +1280,21 @@ class DPad extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 72,
-        height: 72,
+        width: 96,
+        height: 96,
         decoration: BoxDecoration(
           color: scheme.surface,
           border: Border.all(color: scheme.onSurface, width: 2),
         ),
-        child: Icon(icon, color: scheme.onSurface, size: 36),
+        child: Icon(icon, color: scheme.onSurface, size: 48),
       ),
     );
   }
 
   Widget _center(ColorScheme scheme) {
     return Container(
-      width: 72,
-      height: 72,
+      width: 96,
+      height: 96,
       decoration: BoxDecoration(
         color: scheme.surface,
         border: Border.all(color: scheme.onSurface, width: 2),

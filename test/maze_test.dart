@@ -176,7 +176,7 @@ void main() {
 
         final rng = Random(7);
         for (var step = 0; step < 120; step++) {
-          maze.advanceEnemy(e, 0, 0, rng: rng, chaseRange: 0);
+          maze.advanceEnemy(e, rng: rng);
           expect(e.row, greaterThanOrEqualTo(mid),
               reason: 'enemy crossed the middle while patrolling');
           expect(maze.patrolRoute[e.patrolIndex], (e.row, e.col),
@@ -186,61 +186,26 @@ void main() {
     }
   });
 
-  test('Enemy chases the player when close', () {
-    int bfsDistance(Maze maze, int tr, int tc, int a, int b) {
-      final seen = List.generate(
-        maze.size,
-        (_) => List<bool>.filled(maze.size, false),
-      );
-      final queue = <(int, int)>[(a, b)];
-      seen[a][b] = true;
-      var depth = 0;
-      while (queue.isNotEmpty) {
-        for (var k = 0, n = queue.length; k < n; k++) {
-          final (r, c) = queue.removeAt(0);
-          if (r == tr && c == tc) return depth;
-          final cell = maze.cells[r][c];
-          if (!cell.top && !seen[r - 1][c]) {
-            seen[r - 1][c] = true;
-            queue.add((r - 1, c));
-          }
-          if (!cell.bottom && !seen[r + 1][c]) {
-            seen[r + 1][c] = true;
-            queue.add((r + 1, c));
-          }
-          if (!cell.left && !seen[r][c - 1]) {
-            seen[r][c - 1] = true;
-            queue.add((r, c - 1));
-          }
-          if (!cell.right && !seen[r][c + 1]) {
-            seen[r][c + 1] = true;
-            queue.add((r, c + 1));
+  test('Enemies desync instead of moving in lockstep', () {
+    for (final size in [11, 15, 21]) {
+      for (var trial = 0; trial < 5; trial++) {
+        final maze = Maze(size, enemyCount: 3);
+        final rng = Random(trial);
+        final spacing = <List<int>>[
+          for (var e = 0; e < maze.enemies.length; e++) []
+        ];
+        for (var step = 0; step < 200; step++) {
+          for (var i = 0; i < maze.enemies.length; i++) {
+            maze.advanceEnemy(maze.enemies[i], rng: rng);
+            spacing[i].add(maze.enemies[i].patrolIndex);
           }
         }
-        depth++;
-      }
-      return -1;
-    }
-
-    var chases = 0;
-    for (final size in [11, 15, 21]) {
-      for (var trial = 0; trial < 15; trial++) {
-        final maze = Maze(size, enemyCount: 1);
-        final e = maze.enemies.first;
-        final mid = size ~/ 2;
-        final pr = mid - 1;
-        final pc = e.col;
-        final before = bfsDistance(maze, pr, pc, e.row, e.col);
-        if (before < 1 || before > 6) continue;
-        chases++;
-        maze.advanceEnemy(e, pr, pc, rng: Random(trial), chaseRange: 6);
-        final after = bfsDistance(maze, pr, pc, e.row, e.col);
-        expect(after, before - 1,
-            reason: 'chase must take one step closer to the player');
+        // At some point the enemies must occupy different route positions.
+        final positions = spacing.map((s) => s.last).toSet();
+        expect(positions.length, greaterThan(1),
+            reason: 'enemies are always in the same route position');
       }
     }
-    expect(chases, greaterThan(0),
-        reason: 'no trial produced an enemy in chase range');
   });
 
   test('Enemy patrols the main corridors and leaves dead ends as hiding spots',
@@ -411,7 +376,7 @@ void main() {
         final visited = <(int, int)>{};
         final rng = Random(9);
         for (var step = 0; step < maze.patrolRoute.length * 4; step++) {
-          maze.advanceEnemy(e, 0, 0, rng: rng, chaseRange: 0);
+          maze.advanceEnemy(e, rng: rng);
           expect(e.row, greaterThanOrEqualTo(mid),
               reason: 'enemy crossed the middle while patrolling');
           expect(maze.patrolRoute[e.patrolIndex], (e.row, e.col),

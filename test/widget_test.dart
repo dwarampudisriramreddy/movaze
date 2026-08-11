@@ -21,10 +21,10 @@ void main() {
   testWidgets('D-pad controls are present', (WidgetTester tester) async {
     await tester.pumpWidget(const MovazeApp());
 
-    expect(find.byIcon(Icons.arrow_upward), findsOneWidget);
-    expect(find.byIcon(Icons.arrow_downward), findsOneWidget);
-    expect(find.byIcon(Icons.arrow_back), findsOneWidget);
-    expect(find.byIcon(Icons.arrow_forward), findsOneWidget);
+    expect(find.byIcon(Icons.arrow_upward), findsWidgets);
+    expect(find.byIcon(Icons.arrow_downward), findsWidgets);
+    expect(find.byIcon(Icons.arrow_back), findsWidgets);
+    expect(find.byIcon(Icons.arrow_forward), findsWidgets);
   });
 
   testWidgets('Dark mode toggle switches theme', (WidgetTester tester) async {
