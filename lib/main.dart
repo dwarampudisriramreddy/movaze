@@ -1157,13 +1157,18 @@ class _MazeGameState extends State<MazeGame> {
                         ),
                       ],
                     ),
-                    Text(
-                      'MOVAZE',
-                      style: TextStyle(
-                        color: scheme.onSurface,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 3,
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          'MOVAZE',
+                          style: TextStyle(
+                            color: scheme.onSurface,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 3,
+                          ),
+                        ),
                       ),
                     ),
                     Row(
