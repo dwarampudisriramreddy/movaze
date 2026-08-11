@@ -1380,7 +1380,8 @@ class DPad extends StatelessWidget {
     required this.onRight,
   });
 
-  static const double pad = 64;
+  static const double pad = 48;
+  static const double gap = 8;
 
   final VoidCallback onUp;
   final VoidCallback onDown;
@@ -1397,7 +1398,7 @@ class DPad extends StatelessWidget {
           color: scheme.surface,
           border: Border.all(color: scheme.onSurface, width: 2),
         ),
-        child: Icon(icon, color: scheme.onSurface, size: 32),
+        child: Icon(icon, color: scheme.onSurface, size: 28),
       ),
     );
   }
@@ -1405,13 +1406,23 @@ class DPad extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         _button(scheme, Icons.arrow_upward, onUp),
+        SizedBox(height: gap),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _button(scheme, Icons.arrow_back, onLeft),
+            SizedBox(width: gap),
+            SizedBox(width: pad, height: pad),
+            SizedBox(width: gap),
+            _button(scheme, Icons.arrow_forward, onRight),
+          ],
+        ),
+        SizedBox(height: gap),
         _button(scheme, Icons.arrow_downward, onDown),
-        _button(scheme, Icons.arrow_back, onLeft),
-        _button(scheme, Icons.arrow_forward, onRight),
       ],
     );
   }
