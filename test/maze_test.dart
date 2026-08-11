@@ -163,7 +163,7 @@ void main() {
     }
   });
 
-  test('Enemy patrols its route and never leaves the bottom half', () {
+  test('Enemy patrols its own arc and never leaves the bottom half', () {
     for (final size in [7, 11, 21]) {
       for (var trial = 0; trial < 5; trial++) {
         final maze = Maze(size, enemyCount: 1);
@@ -171,7 +171,7 @@ void main() {
         final mid = size ~/ 2;
         expect(e.row, greaterThanOrEqualTo(mid),
             reason: 'enemy must spawn in its half of the maze');
-        expect(e.patrolIndex, inInclusiveRange(0, maze.patrolRoute.length - 1));
+        expect(e.patrolIndex, inInclusiveRange(e.startIndex, e.endIndex));
         expect(maze.patrolRoute[e.patrolIndex], (e.row, e.col));
 
         final rng = Random(7);
@@ -180,32 +180,40 @@ void main() {
           expect(e.row, greaterThanOrEqualTo(mid),
               reason: 'enemy crossed the middle while patrolling');
           expect(maze.patrolRoute[e.patrolIndex], (e.row, e.col),
-              reason: 'enemy is not following its patrol route');
+              reason: 'enemy is not following its patrol arc');
+          expect(e.patrolIndex, inInclusiveRange(e.startIndex, e.endIndex),
+              reason: 'enemy left its assigned patrol arc');
         }
       }
     }
   });
 
-  test('Enemies desync instead of moving in lockstep', () {
+  test('Enemies patrol independent arcs and stay spread out', () {
+    var spread = 0;
     for (final size in [11, 15, 21]) {
       for (var trial = 0; trial < 5; trial++) {
         final maze = Maze(size, enemyCount: 3);
         final rng = Random(trial);
-        final spacing = <List<int>>[
-          for (var e = 0; e < maze.enemies.length; e++) []
-        ];
-        for (var step = 0; step < 200; step++) {
-          for (var i = 0; i < maze.enemies.length; i++) {
-            maze.advanceEnemy(maze.enemies[i], rng: rng);
-            spacing[i].add(maze.enemies[i].patrolIndex);
+        final arcs = <(int, int)>{};
+        for (final e in maze.enemies) {
+          arcs.add((e.startIndex, e.endIndex));
+        }
+        // Each enemy owns a distinct arc of the route.
+        expect(arcs.length, maze.enemies.length,
+            reason: 'enemies share a patrol arc');
+        for (var step = 0; step < 300; step++) {
+          for (final e in maze.enemies) {
+            maze.advanceEnemy(e, rng: rng);
           }
         }
-        // At some point the enemies must occupy different route positions.
-        final positions = spacing.map((s) => s.last).toSet();
-        expect(positions.length, greaterThan(1),
-            reason: 'enemies are always in the same route position');
+        final positions = {
+          for (final e in maze.enemies) (e.row, e.col),
+        };
+        if (positions.length == maze.enemies.length) spread++;
       }
     }
+    expect(spread, greaterThan(0),
+        reason: 'enemies never spread to distinct positions');
   });
 
   test('Enemy patrols the main corridors and leaves dead ends as hiding spots',
@@ -381,6 +389,8 @@ void main() {
               reason: 'enemy crossed the middle while patrolling');
           expect(maze.patrolRoute[e.patrolIndex], (e.row, e.col),
               reason: 'enemy is not following its patrol route');
+          expect(e.patrolIndex, inInclusiveRange(e.startIndex, e.endIndex),
+              reason: 'enemy left its assigned patrol arc');
           visited.add((e.row, e.col));
         }
 

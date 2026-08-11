@@ -10,7 +10,7 @@ import 'package:movaze/main.dart';
 
 void main() {
   testWidgets('Maze game smoke test', (WidgetTester tester) async {
-    await tester.pumpWidget(const MovazeApp());
+    await tester.pumpWidget(const MovazeApp(skipSplash: true));
 
     expect(find.text('MOVAZE'), findsOneWidget);
     expect(find.text('LEVEL 1'), findsOneWidget);
@@ -19,7 +19,7 @@ void main() {
   });
 
   testWidgets('D-pad controls are present', (WidgetTester tester) async {
-    await tester.pumpWidget(const MovazeApp());
+    await tester.pumpWidget(const MovazeApp(skipSplash: true));
 
     expect(find.byIcon(Icons.arrow_upward), findsWidgets);
     expect(find.byIcon(Icons.arrow_downward), findsWidgets);
@@ -28,7 +28,7 @@ void main() {
   });
 
   testWidgets('Dark mode toggle switches theme', (WidgetTester tester) async {
-    await tester.pumpWidget(const MovazeApp());
+    await tester.pumpWidget(const MovazeApp(skipSplash: true));
 
     expect(find.byIcon(Icons.dark_mode_outlined), findsOneWidget);
     await tester.tap(find.byIcon(Icons.dark_mode_outlined));

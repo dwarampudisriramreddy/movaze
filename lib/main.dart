@@ -8,12 +8,13 @@ import 'package:vibration/vibration.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  MobileAds.instance.initialize();
   runApp(const MovazeApp());
 }
 
 class MovazeApp extends StatefulWidget {
-  const MovazeApp({super.key});
+  const MovazeApp({super.key, this.skipSplash = false});
+
+  final bool skipSplash;
 
   @override
   State<MovazeApp> createState() => _MovazeAppState();
@@ -21,6 +22,23 @@ class MovazeApp extends StatefulWidget {
 
 class _MovazeAppState extends State<MovazeApp> {
   bool _dark = false;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _prepare();
+  }
+
+  Future<void> _prepare() async {
+    if (!widget.skipSplash) {
+      try {
+        await MobileAds.instance.initialize();
+      } catch (_) {}
+      await Future.delayed(const Duration(milliseconds: 1600));
+    }
+    if (mounted) setState(() => _ready = true);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -60,9 +78,81 @@ class _MovazeAppState extends State<MovazeApp> {
         ),
       ),
       themeMode: _dark ? ThemeMode.dark : ThemeMode.light,
-      home: MazeGame(
-        isDark: _dark,
-        onToggleDark: () => setState(() => _dark = !_dark),
+      home: _ready
+          ? MazeGame(
+              isDark: _dark,
+              onToggleDark: () => setState(() => _dark = !_dark),
+            )
+          : const SplashScreen(),
+    );
+  }
+}
+
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    )..forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final progress =
+        CurvedAnimation(parent: _controller, curve: Curves.easeInOut);
+    return Scaffold(
+      backgroundColor: scheme.surface,
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'MOVAZE',
+              style: TextStyle(
+                color: scheme.onSurface,
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 8,
+              ),
+            ),
+            const SizedBox(height: 40),
+            SizedBox(
+              width: 240,
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, _) => ClipRRect(
+                  borderRadius: BorderRadius.circular(3),
+                  child: LinearProgressIndicator(
+                    value: progress.value,
+                    minHeight: 6,
+                    color: scheme.onSurface,
+                    backgroundColor:
+                        scheme.onSurface.withValues(alpha: 0.2),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -127,11 +217,20 @@ class Enemy {
   int row;
   int col;
   int patrolIndex;
+  int startIndex;
+  int endIndex;
   int dir;
   double pace;
 
-  Enemy(this.row, this.col, this.patrolIndex,
-      {this.dir = 1, this.pace = 0.6});
+  Enemy(
+    this.row,
+    this.col,
+    this.patrolIndex, {
+    required this.startIndex,
+    required this.endIndex,
+    this.dir = 1,
+    this.pace = 0.6,
+  });
 }
 
 class Maze {
@@ -192,37 +291,23 @@ class Maze {
 
   void _placeEnemies(int count) {
     final rng = Random();
-    final placed = <int>{};
-    var attempts = 0;
-    final mid = size ~/ 2;
-    while (enemies.length < count && attempts < size * size * 4) {
-      attempts++;
-      final r = mid + rng.nextInt(size - mid);
-      final c = rng.nextInt(size);
-      if (r + c < size) continue;
-      final id = r * size + c;
-      if (placed.contains(id)) continue;
-      final idx = _routeIndexOf(r, c);
-      if (idx == -1) continue;
-      placed.add(id);
+    final L = patrolRoute.length;
+    final enemiesPerArc = L ~/ count;
+    for (var i = 0; i < count; i++) {
+      final start = i * enemiesPerArc;
+      final end = i == count - 1 ? L - 1 : (i + 1) * enemiesPerArc - 1;
+      final idx = start + rng.nextInt(end - start + 1);
+      final (r, c) = patrolRoute[idx];
       enemies.add(Enemy(
         r,
         c,
         idx,
+        startIndex: start,
+        endIndex: end,
         dir: rng.nextBool() ? 1 : -1,
-        pace: 0.5 + rng.nextDouble() * 0.4,
+        pace: 0.6 + rng.nextDouble() * 0.3,
       ));
     }
-  }
-
-  int _routeIndexOf(int r, int c, [int from = 0]) {
-    for (var i = from; i < patrolRoute.length; i++) {
-      if (patrolRoute[i] == (r, c)) return i;
-    }
-    for (var i = 0; i < from; i++) {
-      if (patrolRoute[i] == (r, c)) return i;
-    }
-    return -1;
   }
 
   void _buildPatrolRoute() {
@@ -776,16 +861,40 @@ class Maze {
     return null;
   }
 
-  /// Advances one enemy: patrols the backbone at an independent random pace
-  /// so enemies desync and cover different regions instead of marching as a
-  /// single synchronized train. Off-route dead ends stay safe hiding spots.
-  void advanceEnemy(Enemy e, {required Random rng}) {
-    if (rng.nextDouble() < e.pace) {
-      e.patrolIndex = (e.patrolIndex + e.dir) % patrolRoute.length;
-      final (nr, nc) = patrolRoute[e.patrolIndex];
-      e.row = nr;
-      e.col = nc;
+  Enemy? _enemyAtCell(int r, int c) {
+    for (final e in enemies) {
+      if (e.row == r && e.col == c) return e;
     }
+    return null;
+  }
+
+  /// True when [other] is headed for [e]'s current cell, so the two can swap
+  /// places instead of blocking each other forever.
+  bool _wantsToSwap(Enemy e, Enemy other) {
+    if (other.startIndex == other.endIndex) return false;
+    var target = other.patrolIndex + other.dir;
+    if (target < other.startIndex || target > other.endIndex) {
+      target = other.patrolIndex - other.dir;
+    }
+    return target == e.patrolIndex;
+  }
+
+  /// Distributed patrol AI: each enemy owns an exclusive arc of the patrol
+  /// route and bounces along it, so enemies are spread across the map instead
+  /// of all riding one side. Off-route dead ends stay safe hiding spots.
+  void advanceEnemy(Enemy e, {required Random rng}) {
+    if (rng.nextDouble() >= e.pace) return;
+    if (e.startIndex == e.endIndex) return;
+    var next = e.patrolIndex + e.dir;
+    if (next < e.startIndex || next > e.endIndex) {
+      e.dir = -e.dir;
+      next = e.patrolIndex + e.dir;
+    }
+    final other = _enemyAtCell(patrolRoute[next].$1, patrolRoute[next].$2);
+    if (other != null && !_wantsToSwap(e, other)) return;
+    e.patrolIndex = next;
+    e.row = patrolRoute[next].$1;
+    e.col = patrolRoute[next].$2;
   }
 }
 
@@ -1271,6 +1380,8 @@ class DPad extends StatelessWidget {
     required this.onRight,
   });
 
+  static const double pad = 64;
+
   final VoidCallback onUp;
   final VoidCallback onDown;
   final VoidCallback onLeft;
@@ -1280,24 +1391,13 @@ class DPad extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 96,
-        height: 96,
+        width: pad,
+        height: pad,
         decoration: BoxDecoration(
           color: scheme.surface,
           border: Border.all(color: scheme.onSurface, width: 2),
         ),
-        child: Icon(icon, color: scheme.onSurface, size: 48),
-      ),
-    );
-  }
-
-  Widget _center(ColorScheme scheme) {
-    return Container(
-      width: 96,
-      height: 96,
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        border: Border.all(color: scheme.onSurface, width: 2),
+        child: Icon(icon, color: scheme.onSurface, size: 32),
       ),
     );
   }
@@ -1305,19 +1405,13 @@ class DPad extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
         _button(scheme, Icons.arrow_upward, onUp),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _button(scheme, Icons.arrow_back, onLeft),
-            _center(scheme),
-            _button(scheme, Icons.arrow_forward, onRight),
-          ],
-        ),
         _button(scheme, Icons.arrow_downward, onDown),
+        _button(scheme, Icons.arrow_back, onLeft),
+        _button(scheme, Icons.arrow_forward, onRight),
       ],
     );
   }
