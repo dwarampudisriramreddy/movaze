@@ -312,70 +312,6 @@ void main() {
           }
         }
 
-        // The largest dead-end branch is re-added to the patrol route.
-        final seenPeeled =
-            List.generate(size, (_) => List<bool>.filled(size, false));
-        final branches = <List<(int, int)>>[];
-        for (var r = mid; r < size; r++) {
-          for (var c = 0; c < size; c++) {
-            if (main[r][c] || seenPeeled[r][c]) continue;
-            final branch = <(int, int)>[(r, c)];
-            seenPeeled[r][c] = true;
-            final queue = <(int, int)>[(r, c)];
-            var touchesMain = false;
-            while (queue.isNotEmpty) {
-              final (cr, cc) = queue.removeAt(0);
-              final cell = maze.cells[cr][cc];
-              if (cr > mid && !cell.top) {
-                if (main[cr - 1][cc]) {
-                  touchesMain = true;
-                } else if (!seenPeeled[cr - 1][cc]) {
-                  seenPeeled[cr - 1][cc] = true;
-                  branch.add((cr - 1, cc));
-                  queue.add((cr - 1, cc));
-                }
-              }
-              if (cr < size - 1 && !cell.bottom) {
-                if (main[cr + 1][cc]) {
-                  touchesMain = true;
-                } else if (!seenPeeled[cr + 1][cc]) {
-                  seenPeeled[cr + 1][cc] = true;
-                  branch.add((cr + 1, cc));
-                  queue.add((cr + 1, cc));
-                }
-              }
-              if (cc > 0 && !cell.left) {
-                if (main[cr][cc - 1]) {
-                  touchesMain = true;
-                } else if (!seenPeeled[cr][cc - 1]) {
-                  seenPeeled[cr][cc - 1] = true;
-                  branch.add((cr, cc - 1));
-                  queue.add((cr, cc - 1));
-                }
-              }
-              if (cc < size - 1 && !cell.right) {
-                if (main[cr][cc + 1]) {
-                  touchesMain = true;
-                } else if (!seenPeeled[cr][cc + 1]) {
-                  seenPeeled[cr][cc + 1] = true;
-                  branch.add((cr, cc + 1));
-                  queue.add((cr, cc + 1));
-                }
-              }
-            }
-            if (touchesMain) branches.add(branch);
-          }
-        }
-        if (branches.isNotEmpty) {
-          var largest = branches.first;
-          for (final b in branches) {
-            if (b.length > largest.length) largest = b;
-          }
-          for (final (r, c) in largest) {
-            main[r][c] = true;
-          }
-        }
-
         expect(main.any((row) => row.any((v) => v)), isTrue,
             reason: 'patrol backbone is empty');
         expect(main[size - 1][size - 1], isTrue,
@@ -408,7 +344,7 @@ void main() {
         expect(expected.length, lessThan(totalHalf),
             reason: 'dead-end hiding spots were not left unpatrolled');
 
-        final routeHasDeadEnd = expected.any((p) {
+        final routeHasDeadEnd = maze.patrolRoute.any((p) {
           final cell = maze.cells[p.$1][p.$2];
           var open = 0;
           if (!cell.top) open++;
@@ -417,8 +353,33 @@ void main() {
           if (!cell.right) open++;
           return open == 1;
         });
-        expect(routeHasDeadEnd, isTrue,
-            reason: 'patrol route has no dead-end on it');
+        expect(routeHasDeadEnd, isFalse,
+            reason: 'patrol route includes a dead-end hiding spot');
+        expect(
+            maze.patrolRoute.any((p) => p == (size - 1, size - 1)), isFalse,
+            reason: 'goal cell is patrolled, so the level cannot be won');
+
+        // At least one dead-end hiding spot must exist off the patrol route.
+        final routeCells = <(int, int)>{};
+        for (final p in maze.patrolRoute) {
+          routeCells.add(p);
+        }
+        final safeSpots = <(int, int)>{};
+        for (var r = mid; r < size; r++) {
+          for (var c = 0; c < size; c++) {
+            if (r == size - 1 && c == size - 1) continue;
+            if (routeCells.contains((r, c))) continue;
+            final cell = maze.cells[r][c];
+            var open = 0;
+            if (!cell.top) open++;
+            if (!cell.bottom) open++;
+            if (!cell.left) open++;
+            if (!cell.right) open++;
+            if (open == 1) safeSpots.add((r, c));
+          }
+        }
+        expect(safeSpots, isNotEmpty,
+            reason: 'no dead-end hiding spot exists off the patrol route');
       }
     }
   });

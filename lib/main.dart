@@ -258,8 +258,28 @@ class Maze {
       }
       _generate();
       _connectHalf();
-      if (_solutionRatio() >= 0.45) break;
+      if (_solutionRatio() >= 0.45 && _hasSafeHidingSpot()) break;
     }
+  }
+
+  /// True when the bottom half has at least one dead-end cell (other than the
+  /// goal) that the patrol route will never cover, so the player always has a
+  /// safe hiding spot to let enemies pass by.
+  bool _hasSafeHidingSpot() {
+    final mid = size ~/ 2;
+    for (var r = mid; r < size; r++) {
+      for (var c = 0; c < size; c++) {
+        if (r == size - 1 && c == size - 1) continue;
+        final cell = cells[r][c];
+        var open = 0;
+        if (!cell.top) open++;
+        if (!cell.bottom) open++;
+        if (!cell.left) open++;
+        if (!cell.right) open++;
+        if (open == 1) return true;
+      }
+    }
+    return false;
   }
 
   double _solutionRatio() {
@@ -293,10 +313,27 @@ class Maze {
     final rng = Random();
     final L = patrolRoute.length;
     final enemiesPerArc = L ~/ count;
+    final used = <(int, int)>{};
     for (var i = 0; i < count; i++) {
       final start = i * enemiesPerArc;
       final end = i == count - 1 ? L - 1 : (i + 1) * enemiesPerArc - 1;
-      final idx = start + rng.nextInt(end - start + 1);
+      var idx = start + rng.nextInt(end - start + 1);
+      if (used.contains(patrolRoute[idx])) {
+        for (var offset = 1; offset <= end - start; offset++) {
+          final candidates = [idx - offset, idx + offset];
+          var found = false;
+          for (final cand in candidates) {
+            if (cand < start || cand > end) continue;
+            if (!used.contains(patrolRoute[cand])) {
+              idx = cand;
+              found = true;
+              break;
+            }
+          }
+          if (found) break;
+        }
+      }
+      used.add(patrolRoute[idx]);
       final (r, c) = patrolRoute[idx];
       enemies.add(Enemy(
         r,
@@ -400,110 +437,87 @@ class Maze {
       }
     }
 
-    // Keep at least one dead-end branch on the patrol route so the enemy
-    // sometimes ducks into a cul-de-sac (and the player gets an opening).
-    final seenPeeled =
-        List.generate(size, (_) => List<bool>.filled(size, false));
-    final branches = <List<(int, int)>>[];
+    // Dead-end branches stay off the patrol route so they are safe hiding
+    // spots for the player, and the goal cell is never patrolled either so
+    // the level can always be won.
+
+    // Patrol walk: a self-avoiding snake over the main backbone, so every
+    // cell appears exactly once. Enemies own exclusive arcs of it, so they
+    // can never share a cell or block each other.
+    final rng = Random();
+    final starts = <(int, int)>[];
     for (var r = mid; r < size; r++) {
       for (var c = 0; c < size; c++) {
-        if (main[r][c] || seenPeeled[r][c]) continue;
-        final branch = <(int, int)>[(r, c)];
-        seenPeeled[r][c] = true;
-        final queue = <(int, int)>[(r, c)];
-        var touchesMain = false;
-        while (queue.isNotEmpty) {
-          final (cr, cc) = queue.removeAt(0);
-          final cell = cells[cr][cc];
-          if (cr > mid && !cell.top) {
-            if (main[cr - 1][cc]) {
-              touchesMain = true;
-            } else if (!seenPeeled[cr - 1][cc]) {
-              seenPeeled[cr - 1][cc] = true;
-              branch.add((cr - 1, cc));
-              queue.add((cr - 1, cc));
-            }
-          }
-          if (cr < size - 1 && !cell.bottom) {
-            if (main[cr + 1][cc]) {
-              touchesMain = true;
-            } else if (!seenPeeled[cr + 1][cc]) {
-              seenPeeled[cr + 1][cc] = true;
-              branch.add((cr + 1, cc));
-              queue.add((cr + 1, cc));
-            }
-          }
-          if (cc > 0 && !cell.left) {
-            if (main[cr][cc - 1]) {
-              touchesMain = true;
-            } else if (!seenPeeled[cr][cc - 1]) {
-              seenPeeled[cr][cc - 1] = true;
-              branch.add((cr, cc - 1));
-              queue.add((cr, cc - 1));
-            }
-          }
-          if (cc < size - 1 && !cell.right) {
-            if (main[cr][cc + 1]) {
-              touchesMain = true;
-            } else if (!seenPeeled[cr][cc + 1]) {
-              seenPeeled[cr][cc + 1] = true;
-              branch.add((cr, cc + 1));
-              queue.add((cr, cc + 1));
-            }
-          }
+        if (main[r][c] && !(r == size - 1 && c == size - 1)) {
+          starts.add((r, c));
         }
-        if (touchesMain) branches.add(branch);
       }
     }
-    if (branches.isNotEmpty) {
-      var largest = branches.first;
-      for (final b in branches) {
-        if (b.length > largest.length) largest = b;
+    var best = <(int, int)>[];
+    for (var attempt = 0; attempt < 100; attempt++) {
+      final visited =
+          List.generate(size, (_) => List<bool>.filled(size, false));
+      final start = starts[rng.nextInt(starts.length)];
+      final route = <(int, int)>[start];
+      visited[start.$1][start.$2] = true;
+      var (r, c) = start;
+      while (true) {
+        final cell = cells[r][c];
+        final options = <(int, int)>[];
+        if (r > mid && !visited[r - 1][c] && !cell.top && main[r - 1][c]) {
+          options.add((r - 1, c));
+        }
+        if (c < size - 1 &&
+            !visited[r][c + 1] &&
+            !cell.right &&
+            main[r][c + 1]) {
+          options.add((r, c + 1));
+        }
+        if (r < size - 1 &&
+            !visited[r + 1][c] &&
+            !cell.bottom &&
+            main[r + 1][c]) {
+          options.add((r + 1, c));
+        }
+        if (c > 0 && !visited[r][c - 1] && !cell.left && main[r][c - 1]) {
+          options.add((r, c - 1));
+        }
+        options.removeWhere((p) => p == (size - 1, size - 1));
+        if (options.isEmpty) break;
+        options.sort(
+          (a, b) => _onwardCount(a.$1, a.$2, visited, main, mid).compareTo(
+                _onwardCount(b.$1, b.$2, visited, main, mid),
+              ),
+        );
+        final n = options[rng.nextInt(min(2, options.length))];
+        r = n.$1;
+        c = n.$2;
+        visited[r][c] = true;
+        route.add((r, c));
       }
-      for (final (r, c) in largest) {
-        main[r][c] = true;
-      }
+      if (route.length > best.length) best = route;
     }
+    patrolRoute = best;
+  }
 
-    // Patrol walk: a DFS tour over the main backbone, looping forever.
-    final visited =
-        List.generate(size, (_) => List<bool>.filled(size, false));
-    final route = <(int, int)>[(size - 1, size - 1)];
-    visited[size - 1][size - 1] = true;
-    final stack = <(int, int)>[(size - 1, size - 1)];
-    while (stack.isNotEmpty) {
-      final (r, c) = stack.last;
-      final cell = cells[r][c];
-      final neighbors = <(int, int)>[];
-      if (r > mid && !visited[r - 1][c] && !cell.top && main[r - 1][c]) {
-        neighbors.add((r - 1, c));
-      }
-      if (c < size - 1 &&
-          !visited[r][c + 1] &&
-          !cell.right &&
-          main[r][c + 1]) {
-        neighbors.add((r, c + 1));
-      }
-      if (r < size - 1 &&
-          !visited[r + 1][c] &&
-          !cell.bottom &&
-          main[r + 1][c]) {
-        neighbors.add((r + 1, c));
-      }
-      if (c > 0 && !visited[r][c - 1] && !cell.left && main[r][c - 1]) {
-        neighbors.add((r, c - 1));
-      }
-      if (neighbors.isEmpty) {
-        stack.removeLast();
-        if (stack.isNotEmpty) route.add(stack.last);
-      } else {
-        final n = neighbors[Random().nextInt(neighbors.length)];
-        visited[n.$1][n.$2] = true;
-        route.add(n);
-        stack.add(n);
-      }
+  int _onwardCount(
+    int r,
+    int c,
+    List<List<bool>> visited,
+    List<List<bool>> main,
+    int mid,
+  ) {
+    final cell = cells[r][c];
+    var count = 0;
+    if (r > mid && !visited[r - 1][c] && !cell.top && main[r - 1][c]) count++;
+    if (c < size - 1 && !visited[r][c + 1] && !cell.right && main[r][c + 1]) {
+      count++;
     }
-    patrolRoute = route;
+    if (r < size - 1 && !visited[r + 1][c] && !cell.bottom && main[r + 1][c]) {
+      count++;
+    }
+    if (c > 0 && !visited[r][c - 1] && !cell.left && main[r][c - 1]) count++;
+    return count;
   }
 
   void _generate() {
@@ -868,20 +882,11 @@ class Maze {
     return null;
   }
 
-  /// True when [other] is headed for [e]'s current cell, so the two can swap
-  /// places instead of blocking each other forever.
-  bool _wantsToSwap(Enemy e, Enemy other) {
-    if (other.startIndex == other.endIndex) return false;
-    var target = other.patrolIndex + other.dir;
-    if (target < other.startIndex || target > other.endIndex) {
-      target = other.patrolIndex - other.dir;
-    }
-    return target == e.patrolIndex;
-  }
-
   /// Distributed patrol AI: each enemy owns an exclusive arc of the patrol
   /// route and bounces along it, so enemies are spread across the map instead
-  /// of all riding one side. Off-route dead ends stay safe hiding spots.
+  /// of all riding one side. If an enemy's next cell is occupied, it bounces
+  /// back within its own arc so it never leaves it or overlaps a teammate.
+  /// Off-route dead ends stay safe hiding spots.
   void advanceEnemy(Enemy e, {required Random rng}) {
     if (rng.nextDouble() >= e.pace) return;
     if (e.startIndex == e.endIndex) return;
@@ -890,11 +895,21 @@ class Maze {
       e.dir = -e.dir;
       next = e.patrolIndex + e.dir;
     }
-    final other = _enemyAtCell(patrolRoute[next].$1, patrolRoute[next].$2);
-    if (other != null && !_wantsToSwap(e, other)) return;
+    final target = patrolRoute[next];
+    if (_enemyAtCell(target.$1, target.$2) != null) {
+      final back = e.patrolIndex - e.dir;
+      if (back < e.startIndex || back > e.endIndex) return;
+      final behind = patrolRoute[back];
+      if (_enemyAtCell(behind.$1, behind.$2) != null) return;
+      e.dir = -e.dir;
+      e.patrolIndex = back;
+      e.row = behind.$1;
+      e.col = behind.$2;
+      return;
+    }
     e.patrolIndex = next;
-    e.row = patrolRoute[next].$1;
-    e.col = patrolRoute[next].$2;
+    e.row = target.$1;
+    e.col = target.$2;
   }
 }
 
@@ -1380,8 +1395,8 @@ class DPad extends StatelessWidget {
     required this.onRight,
   });
 
-  static const double pad = 48;
-  static const double gap = 8;
+  static const double pad = 56;
+  static const double gap = 10;
 
   final VoidCallback onUp;
   final VoidCallback onDown;
