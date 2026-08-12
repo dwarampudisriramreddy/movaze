@@ -244,16 +244,16 @@ class Maze {
   Maze(this.size, {int enemyCount = 0})
       : cells =
             List.generate(size, (_) => List.generate(size, (_) => MazeCell())) {
-    _generateWithRetry();
-    var attempts = 0;
-    do {
+    _generateWithRetry(enemyCount);
+    for (var attempt = 0; attempt < 20; attempt++) {
       _buildPatrolRoute();
-    } while (!_routePassesDeadEnd() && attempts++ < 50);
+      if (enemyCount <= 0 || _hideIndices().length >= enemyCount) break;
+    }
     if (enemyCount > 0) _placeEnemies(enemyCount);
   }
 
-  void _generateWithRetry() {
-    while (true) {
+  void _generateWithRetry(int enemyCount) {
+    for (var attempt = 0; attempt < 200; attempt++) {
       for (var r = 0; r < size; r++) {
         for (var c = 0; c < size; c++) {
           cells[r][c] = MazeCell();
@@ -261,48 +261,49 @@ class Maze {
       }
       _generate();
       _connectHalf();
-      if (_solutionRatio() >= 0.45 && _hasSafeHidingSpot()) break;
+      if (_solutionRatio() >= 0.45 && _hasSafeHidingSpot(enemyCount)) return;
     }
   }
 
-  /// True when at least one patrol-route cell is directly next to an off-route
-  /// dead-end cell in the bottom half, so the player always has a hiding spot
-  /// sitting right on the enemy's path.
-  bool _routePassesDeadEnd() {
+  /// True when the patrol-route cell at [r],[c] has an off-route dead-end
+  /// branch right beside it, i.e. a hiding spot whose entrance sits directly
+  /// on an enemy's path.
+  bool _hasDeadEndBeside(int r, int c, Set<(int, int)> onRoute) {
     final mid = size ~/ 2;
-    final onRoute = {for (final p in patrolRoute) p};
-    bool isDeadEndOffRoute(int r, int c) {
-      if (r < mid) return false;
-      if (r == size - 1 && c == size - 1) return false;
-      if (onRoute.contains((r, c))) return false;
-      final cell = cells[r][c];
-      var open = 0;
-      if (!cell.top) open++;
-      if (!cell.bottom) open++;
-      if (!cell.left) open++;
-      if (!cell.right) open++;
-      return open == 1;
+    final cell = cells[r][c];
+    bool isBranchCell(int nr, int nc) {
+      if (nr < mid) return false;
+      if (nr == size - 1 && nc == size - 1) return false;
+      return !onRoute.contains((nr, nc));
     }
 
-    for (final (r, c) in patrolRoute) {
-      final cell = cells[r][c];
-      if (r > mid && !cell.top && isDeadEndOffRoute(r - 1, c)) return true;
-      if (r < size - 1 && !cell.bottom && isDeadEndOffRoute(r + 1, c)) {
-        return true;
-      }
-      if (c > 0 && !cell.left && isDeadEndOffRoute(r, c - 1)) return true;
-      if (c < size - 1 && !cell.right && isDeadEndOffRoute(r, c + 1)) {
-        return true;
-      }
-    }
+    if (r > mid && !cell.top && isBranchCell(r - 1, c)) return true;
+    if (r < size - 1 && !cell.bottom && isBranchCell(r + 1, c)) return true;
+    if (c > 0 && !cell.left && isBranchCell(r, c - 1)) return true;
+    if (c < size - 1 && !cell.right && isBranchCell(r, c + 1)) return true;
     return false;
   }
 
-  /// True when the bottom half has at least one dead-end cell (other than the
-  /// goal) that the patrol route will never cover, so the player always has a
-  /// safe hiding spot to let enemies pass by.
-  bool _hasSafeHidingSpot() {
+  /// Route positions whose cell sits right next to a dead-end hiding spot.
+  List<int> _hideIndices() {
+    final onRoute = {for (final p in patrolRoute) p};
+    final hide = <int>[];
+    for (var i = 0; i < patrolRoute.length; i++) {
+      final (r, c) = patrolRoute[i];
+      if (_hasDeadEndBeside(r, c, onRoute)) hide.add(i);
+    }
+    return hide;
+  }
+
+  /// True when the bottom half has enough dead-end hiding spots for every
+  /// enemy. Three leaves are required per enemy: each dead-end branch hangs
+  /// off a junction corridor that hosts at most three branches, so three
+  /// leaves guarantee at least one distinct entrance corridor per enemy, and
+  /// the patrol walk visits every entrance.
+  bool _hasSafeHidingSpot(int enemyCount) {
     final mid = size ~/ 2;
+    final needed = enemyCount > 0 ? enemyCount * 3 : 3;
+    var count = 0;
     for (var r = mid; r < size; r++) {
       for (var c = 0; c < size; c++) {
         if (r == size - 1 && c == size - 1) continue;
@@ -312,7 +313,7 @@ class Maze {
         if (!cell.bottom) open++;
         if (!cell.left) open++;
         if (!cell.right) open++;
-        if (open == 1) return true;
+        if (open == 1 && ++count >= needed) return true;
       }
     }
     return false;
@@ -348,11 +349,47 @@ class Maze {
   void _placeEnemies(int count) {
     final rng = Random();
     final L = patrolRoute.length;
-    final enemiesPerArc = L ~/ count;
+
+    // Route positions that sit right next to an off-route dead-end hiding spot.
+    final hideIdx = _hideIndices();
+
+    // Give every enemy an arc that contains its own distinct hiding spot by
+    // anchoring arcs at dead-end positions, so each enemy passes a dead end.
+    final starts = <int>[];
+    final ends = <int>[];
+    if (hideIdx.length >= count) {
+      final anchors = <int>[];
+      for (var j = 0; j < count; j++) {
+        anchors.add(hideIdx[(j * hideIdx.length) ~/ count]);
+      }
+      for (var j = 0; j < count; j++) {
+        starts.add(j == 0 ? 0 : (anchors[j - 1] + anchors[j]) ~/ 2 + 1);
+        ends.add(j == count - 1 ? L - 1 : (anchors[j] + anchors[j + 1]) ~/ 2);
+      }
+    } else {
+      // Fallback: equal arcs (rare; only if the maze has too few dead ends).
+      final perArc = L ~/ count;
+      if (perArc < 1) {
+        for (var j = 0; j < count; j++) {
+          starts.add(j);
+          ends.add(j);
+        }
+      } else {
+        for (var j = 0; j < count; j++) {
+          starts.add(j * perArc);
+          ends.add(j == count - 1 ? L - 1 : (j + 1) * perArc - 1);
+        }
+      }
+    }
+
     final used = <(int, int)>{};
     for (var i = 0; i < count; i++) {
-      final start = i * enemiesPerArc;
-      final end = i == count - 1 ? L - 1 : (i + 1) * enemiesPerArc - 1;
+      var start = starts[i];
+      var end = ends[i];
+      if (end < start) {
+        start = i * L ~/ count;
+        end = start;
+      }
       var idx = start + rng.nextInt(end - start + 1);
       if (used.contains(patrolRoute[idx])) {
         for (var offset = 1; offset <= end - start; offset++) {
@@ -477,9 +514,10 @@ class Maze {
     // spots for the player, and the goal cell is never patrolled either so
     // the level can always be won.
 
-    // Patrol walk: a self-avoiding snake over the main backbone, so every
-    // cell appears exactly once. Enemies own exclusive arcs of it, so they
-    // can never share a cell or block each other.
+    // Patrol walk: a self-avoiding snake over the main backbone, so every cell
+    // appears exactly once. Enemies own exclusive arcs of it, so they can never
+    // share a cell or block each other. The goal is never patrolled so the
+    // level can always be won.
     final rng = Random();
     final starts = <(int, int)>[];
     for (var r = mid; r < size; r++) {

@@ -396,4 +396,56 @@ void main() {
       }
     }
   });
+
+  test('every enemy patrol arc passes a dead-end hiding spot', () {
+    for (final (size, enemies) in [(9, 2), (11, 3), (15, 4), (15, 5)]) {
+      for (var trial = 0; trial < 5; trial++) {
+        final maze = Maze(size, enemyCount: enemies);
+        final mid = size ~/ 2;
+        final onRoute = {for (final p in maze.patrolRoute) p};
+
+        // Off-route dead-end cells (any branch cell, not just the leaf) are
+        // hiding spots the player can duck into.
+        final safeSpots = <(int, int)>{};
+        for (var r = mid; r < size; r++) {
+          for (var c = 0; c < size; c++) {
+            if (r == size - 1 && c == size - 1) continue;
+            if (onRoute.contains((r, c))) continue;
+            safeSpots.add((r, c));
+          }
+        }
+
+        bool spotNear(int r, int c) {
+          final cell = maze.cells[r][c];
+          if (r > mid && !cell.top && safeSpots.contains((r - 1, c))) {
+            return true;
+          }
+          if (r < size - 1 && !cell.bottom &&
+              safeSpots.contains((r + 1, c))) {
+            return true;
+          }
+          if (c > 0 && !cell.left && safeSpots.contains((r, c - 1))) {
+            return true;
+          }
+          if (c < size - 1 && !cell.right &&
+              safeSpots.contains((r, c + 1))) {
+            return true;
+          }
+          return false;
+        }
+
+        for (var i = 0; i < enemies; i++) {
+          final e = maze.enemies[i];
+          var adjacent = false;
+          for (var idx = e.startIndex; idx <= e.endIndex && !adjacent; idx++) {
+            final (r, c) = maze.patrolRoute[idx];
+            adjacent = spotNear(r, c);
+          }
+          expect(adjacent, isTrue,
+              reason: 'enemy $i arc [${e.startIndex}, ${e.endIndex}] '
+                  'has no dead-end hiding spot nearby');
+        }
+      }
+    }
+  });
 }
