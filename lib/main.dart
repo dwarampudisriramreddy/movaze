@@ -173,7 +173,7 @@ class TopBanner extends StatefulWidget {
 }
 
 class _TopBannerState extends State<TopBanner> {
-  static const String _adUnitId = 'ca-app-pub-3464757507183621/3007304227';
+  static const String _adUnitId = 'ca-app-pub-3940256099942544/6300978111';
 
   BannerAd? _ad;
   bool _loaded = false;
@@ -1087,7 +1087,7 @@ class MazeGame extends StatefulWidget {
 class _MazeGameState extends State<MazeGame> {
   late Maze _maze;
   static const String _rewardedAdUnitId =
-      'ca-app-pub-3464757507183621/6929219436';
+      'ca-app-pub-3940256099942544/5224354917';
 
   int _level = 1;
   int _maxLevel = 1;
