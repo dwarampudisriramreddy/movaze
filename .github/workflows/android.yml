@@ -26,6 +26,15 @@ jobs:
         with:
           channel: stable
 
+      - name: Set up Android signing
+        run: |
+          cat > android/key.properties <<EOF
+          storePassword=android
+          keyPassword=android
+          keyAlias=upload
+          storeFile=upload-keystore.jks
+          EOF
+
       - name: Build Release APK
         run: flutter build apk --release
 

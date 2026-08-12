@@ -173,7 +173,7 @@ class TopBanner extends StatefulWidget {
 }
 
 class _TopBannerState extends State<TopBanner> {
-  static const String _adUnitId = 'ca-app-pub-3940256099942544/6300978111';
+  static const String _adUnitId = 'ca-app-pub-3464757507183621/3007304227';
 
   BannerAd? _ad;
   bool _loaded = false;
@@ -1087,7 +1087,7 @@ class MazeGame extends StatefulWidget {
 class _MazeGameState extends State<MazeGame> {
   late Maze _maze;
   static const String _rewardedAdUnitId =
-      'ca-app-pub-3940256099942544/5224354917';
+      'ca-app-pub-3464757507183621/6929219436';
 
   int _level = 1;
   int _maxLevel = 1;
@@ -1527,7 +1527,8 @@ class DPad extends StatelessWidget {
     required this.onRight,
   });
 
-  static const double pad = 56;
+  static const double padW = 80;
+  static const double padH = 66;
   static const double gap = 10;
 
   final VoidCallback onUp;
@@ -1539,13 +1540,13 @@ class DPad extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: pad,
-        height: pad,
+        width: padW,
+        height: padH,
         decoration: BoxDecoration(
           color: scheme.surface,
           border: Border.all(color: scheme.onSurface, width: 2),
         ),
-        child: Icon(icon, color: scheme.onSurface, size: 28),
+        child: Icon(icon, color: scheme.onSurface, size: 30),
       ),
     );
   }
@@ -1563,7 +1564,7 @@ class DPad extends StatelessWidget {
           children: [
             _button(scheme, Icons.arrow_back, onLeft),
             SizedBox(width: gap),
-            SizedBox(width: pad, height: pad),
+            SizedBox(width: padW, height: padH),
             SizedBox(width: gap),
             _button(scheme, Icons.arrow_forward, onRight),
           ],

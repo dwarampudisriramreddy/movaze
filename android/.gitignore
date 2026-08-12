@@ -12,3 +12,6 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# Intentionally committed upload keystore (used by GitHub Actions signing).
+!app/upload-keystore.jks
