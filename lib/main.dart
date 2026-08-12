@@ -239,13 +239,16 @@ class Maze {
   int playerRow = 0;
   int playerCol = 0;
   final List<Enemy> enemies = [];
-  late final List<(int, int)> patrolRoute;
+  late List<(int, int)> patrolRoute;
 
   Maze(this.size, {int enemyCount = 0})
       : cells =
             List.generate(size, (_) => List.generate(size, (_) => MazeCell())) {
     _generateWithRetry();
-    _buildPatrolRoute();
+    var attempts = 0;
+    do {
+      _buildPatrolRoute();
+    } while (!_routePassesDeadEnd() && attempts++ < 50);
     if (enemyCount > 0) _placeEnemies(enemyCount);
   }
 
@@ -260,6 +263,39 @@ class Maze {
       _connectHalf();
       if (_solutionRatio() >= 0.45 && _hasSafeHidingSpot()) break;
     }
+  }
+
+  /// True when at least one patrol-route cell is directly next to an off-route
+  /// dead-end cell in the bottom half, so the player always has a hiding spot
+  /// sitting right on the enemy's path.
+  bool _routePassesDeadEnd() {
+    final mid = size ~/ 2;
+    final onRoute = {for (final p in patrolRoute) p};
+    bool isDeadEndOffRoute(int r, int c) {
+      if (r < mid) return false;
+      if (r == size - 1 && c == size - 1) return false;
+      if (onRoute.contains((r, c))) return false;
+      final cell = cells[r][c];
+      var open = 0;
+      if (!cell.top) open++;
+      if (!cell.bottom) open++;
+      if (!cell.left) open++;
+      if (!cell.right) open++;
+      return open == 1;
+    }
+
+    for (final (r, c) in patrolRoute) {
+      final cell = cells[r][c];
+      if (r > mid && !cell.top && isDeadEndOffRoute(r - 1, c)) return true;
+      if (r < size - 1 && !cell.bottom && isDeadEndOffRoute(r + 1, c)) {
+        return true;
+      }
+      if (c > 0 && !cell.left && isDeadEndOffRoute(r, c - 1)) return true;
+      if (c < size - 1 && !cell.right && isDeadEndOffRoute(r, c + 1)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// True when the bottom half has at least one dead-end cell (other than the

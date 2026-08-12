@@ -380,6 +380,19 @@ void main() {
         }
         expect(safeSpots, isNotEmpty,
             reason: 'no dead-end hiding spot exists off the patrol route');
+
+        // At least one such spot must sit directly beside the patrol route, so
+        // enemies pass right by a dead end the player can duck into.
+        final adjacentToRoute = safeSpots.any((spot) {
+          final (sr, sc) = spot;
+          return routeCells.any((p) {
+            final dr = (sr - p.$1).abs();
+            final dc = (sc - p.$2).abs();
+            return dr + dc == 1;
+          });
+        });
+        expect(adjacentToRoute, isTrue,
+            reason: 'no dead-end hiding spot touches the patrol route');
       }
     }
   });
