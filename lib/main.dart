@@ -1093,9 +1093,7 @@ class _MazeGameState extends State<MazeGame> {
   int _maxLevel = 1;
   bool _solving = false;
   bool _vibrationEnabled = true;
-  bool _grace = false;
   Timer? _enemyTimer;
-  Timer? _graceTimer;
   RewardedAd? _rewardedAd;
   bool _rewardedAdLoading = false;
 
@@ -1118,7 +1116,6 @@ class _MazeGameState extends State<MazeGame> {
   @override
   void dispose() {
     _enemyTimer?.cancel();
-    _graceTimer?.cancel();
     _rewardedAd?.dispose();
     _revision.dispose();
     _focusNode.dispose();
@@ -1187,7 +1184,7 @@ class _MazeGameState extends State<MazeGame> {
     _enemyTimer = Timer.periodic(
       Duration(milliseconds: _enemyIntervalMs),
       (_) {
-        if (!mounted || _solving || _grace) return;
+        if (!mounted || _solving) return;
         if (_advanceEnemies()) _caught();
       },
     );
@@ -1236,8 +1233,7 @@ class _MazeGameState extends State<MazeGame> {
     _solving = true;
     if (_rewardedAd == null) _loadRewardedAd();
     final scheme = Theme.of(context).colorScheme;
-    final hasAd = _rewardedAd != null;
-    final continueGame = await showDialog<bool>(
+    final retry = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       barrierColor: scheme.surface,
@@ -1252,49 +1248,38 @@ class _MazeGameState extends State<MazeGame> {
           ),
         ),
         content: Text(
-          hasAd
-              ? 'An enemy cornered you. Watch an ad to keep going.'
-              : 'An enemy cornered you.',
+          'An enemy cornered you.',
           textAlign: TextAlign.center,
           style: TextStyle(color: scheme.onSurface),
         ),
         actions: [
-          if (hasAd)
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(
-                'Watch Ad to Continue',
-                style: TextStyle(
-                  color: scheme.onSurface,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(context, true),
             child: Text(
               'Retry',
-              style: TextStyle(color: scheme.onSurface),
+              style: TextStyle(
+                color: scheme.onSurface,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
         ],
       ),
     );
-    if (continueGame == true) {
-      await _showRewardedAdForContinue();
-    } else {
+    if (retry != true) {
       _restartLevel();
+      return;
     }
+    await _showAdThenRetry();
   }
 
-  Future<void> _showRewardedAdForContinue() async {
+  Future<void> _showAdThenRetry() async {
     final ad = _rewardedAd;
     _rewardedAd = null;
     if (ad == null) {
       _restartLevel();
       return;
     }
-    var rewarded = false;
     ad.fullScreenContentCallback = FullScreenContentCallback(
       onAdDismissedFullScreenContent: (a) {
         a.dispose();
@@ -1306,52 +1291,10 @@ class _MazeGameState extends State<MazeGame> {
       },
     );
     try {
-      await ad.show(onUserEarnedReward: (_, _) => rewarded = true);
-    } catch (_) {
-      _restartLevel();
-      return;
-    }
+      await ad.show(onUserEarnedReward: (_, _) {});
+    } catch (_) {}
     if (!mounted) return;
-    if (rewarded) {
-      _continueAfterCaught();
-    } else {
-      _restartLevel();
-    }
-  }
-
-  void _continueAfterCaught() {
-    setState(() {
-      _solving = false;
-      for (final e in _maze.enemies) {
-        e.patrolIndex = e.startIndex;
-        final (r, c) = _maze.patrolRoute[e.startIndex];
-        e.row = r;
-        e.col = c;
-        if (r == _maze.playerRow &&
-            c == _maze.playerCol &&
-            e.startIndex != e.endIndex) {
-          e.patrolIndex = e.endIndex;
-          final (er, ec) = _maze.patrolRoute[e.endIndex];
-          e.row = er;
-          e.col = ec;
-        }
-      }
-      if (_playerOnEnemy()) {
-        _maze.playerRow = 0;
-        _maze.playerCol = 0;
-      }
-      _revision.value++;
-    });
-    _startGrace();
-    _focusNode.requestFocus();
-  }
-
-  void _startGrace() {
-    _graceTimer?.cancel();
-    setState(() => _grace = true);
-    _graceTimer = Timer(const Duration(milliseconds: 1500), () {
-      if (mounted) setState(() => _grace = false);
-    });
+    _restartLevel();
   }
 
   void _restartLevel() {
