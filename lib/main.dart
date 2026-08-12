@@ -1086,11 +1086,18 @@ class MazeGame extends StatefulWidget {
 
 class _MazeGameState extends State<MazeGame> {
   late Maze _maze;
+  static const String _rewardedAdUnitId =
+      'ca-app-pub-3464757507183621/6929219436';
+
   int _level = 1;
   int _maxLevel = 1;
   bool _solving = false;
   bool _vibrationEnabled = true;
+  bool _grace = false;
   Timer? _enemyTimer;
+  Timer? _graceTimer;
+  RewardedAd? _rewardedAd;
+  bool _rewardedAdLoading = false;
 
   final ValueNotifier<int> _revision = ValueNotifier<int>(0);
 
@@ -1105,11 +1112,14 @@ class _MazeGameState extends State<MazeGame> {
     );
     _loadProgress();
     _focusNode.requestFocus();
+    _loadRewardedAd();
   }
 
   @override
   void dispose() {
     _enemyTimer?.cancel();
+    _graceTimer?.cancel();
+    _rewardedAd?.dispose();
     _revision.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -1154,12 +1164,30 @@ class _MazeGameState extends State<MazeGame> {
     _startEnemyTimer();
   }
 
+  void _loadRewardedAd() {
+    if (_rewardedAdLoading || _rewardedAd != null) return;
+    _rewardedAdLoading = true;
+    RewardedAd.load(
+      adUnitId: _rewardedAdUnitId,
+      request: const AdRequest(),
+      rewardedAdLoadCallback: RewardedAdLoadCallback(
+        onAdLoaded: (ad) {
+          _rewardedAd = ad;
+          _rewardedAdLoading = false;
+        },
+        onAdFailedToLoad: (error) {
+          _rewardedAdLoading = false;
+        },
+      ),
+    );
+  }
+
   void _startEnemyTimer() {
     _enemyTimer?.cancel();
     _enemyTimer = Timer.periodic(
       Duration(milliseconds: _enemyIntervalMs),
       (_) {
-        if (!mounted || _solving) return;
+        if (!mounted || _solving || _grace) return;
         if (_advanceEnemies()) _caught();
       },
     );
@@ -1204,11 +1232,14 @@ class _MazeGameState extends State<MazeGame> {
     return _playerOnEnemy();
   }
 
-  void _caught() {
+  Future<void> _caught() async {
     _solving = true;
+    if (_rewardedAd == null) _loadRewardedAd();
     final scheme = Theme.of(context).colorScheme;
-    showDialog<bool>(
+    final hasAd = _rewardedAd != null;
+    final continueGame = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       barrierColor: scheme.surface,
       builder: (context) => AlertDialog(
         backgroundColor: scheme.surface,
@@ -1221,30 +1252,114 @@ class _MazeGameState extends State<MazeGame> {
           ),
         ),
         content: Text(
-          'An enemy cornered you.',
+          hasAd
+              ? 'An enemy cornered you. Watch an ad to keep going.'
+              : 'An enemy cornered you.',
           textAlign: TextAlign.center,
           style: TextStyle(color: scheme.onSurface),
         ),
         actions: [
+          if (hasAd)
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(
+                'Watch Ad to Continue',
+                style: TextStyle(
+                  color: scheme.onSurface,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(context, false),
             child: Text(
               'Retry',
-              style: TextStyle(
-                color: scheme.onSurface,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(color: scheme.onSurface),
             ),
           ),
         ],
       ),
-    ).then((_) {
-      setState(() {
-        _solving = false;
-        _newMaze();
-      });
-      _focusNode.requestFocus();
+    );
+    if (continueGame == true) {
+      await _showRewardedAdForContinue();
+    } else {
+      _restartLevel();
+    }
+  }
+
+  Future<void> _showRewardedAdForContinue() async {
+    final ad = _rewardedAd;
+    _rewardedAd = null;
+    if (ad == null) {
+      _restartLevel();
+      return;
+    }
+    var rewarded = false;
+    ad.fullScreenContentCallback = FullScreenContentCallback(
+      onAdDismissedFullScreenContent: (a) {
+        a.dispose();
+        _loadRewardedAd();
+      },
+      onAdFailedToShowFullScreenContent: (a, error) {
+        a.dispose();
+        _loadRewardedAd();
+      },
+    );
+    try {
+      await ad.show(onUserEarnedReward: (_, _) => rewarded = true);
+    } catch (_) {
+      _restartLevel();
+      return;
+    }
+    if (!mounted) return;
+    if (rewarded) {
+      _continueAfterCaught();
+    } else {
+      _restartLevel();
+    }
+  }
+
+  void _continueAfterCaught() {
+    setState(() {
+      _solving = false;
+      for (final e in _maze.enemies) {
+        e.patrolIndex = e.startIndex;
+        final (r, c) = _maze.patrolRoute[e.startIndex];
+        e.row = r;
+        e.col = c;
+        if (r == _maze.playerRow &&
+            c == _maze.playerCol &&
+            e.startIndex != e.endIndex) {
+          e.patrolIndex = e.endIndex;
+          final (er, ec) = _maze.patrolRoute[e.endIndex];
+          e.row = er;
+          e.col = ec;
+        }
+      }
+      if (_playerOnEnemy()) {
+        _maze.playerRow = 0;
+        _maze.playerCol = 0;
+      }
+      _revision.value++;
     });
+    _startGrace();
+    _focusNode.requestFocus();
+  }
+
+  void _startGrace() {
+    _graceTimer?.cancel();
+    setState(() => _grace = true);
+    _graceTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _grace = false);
+    });
+  }
+
+  void _restartLevel() {
+    setState(() {
+      _solving = false;
+      _newMaze();
+    });
+    _focusNode.requestFocus();
   }
 
   void _levelComplete() {
