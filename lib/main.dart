@@ -23,6 +23,7 @@ class MovazeApp extends StatefulWidget {
 class _MovazeAppState extends State<MovazeApp> {
   bool _dark = false;
   bool _ready = false;
+  _GameLaunch? _game;
 
   @override
   void initState() {
@@ -38,6 +39,18 @@ class _MovazeAppState extends State<MovazeApp> {
       await Future.delayed(const Duration(milliseconds: 1600));
     }
     if (mounted) setState(() => _ready = true);
+  }
+
+  void _launch(_GameLaunch launch) {
+    setState(() => _game = launch);
+  }
+
+  void _exitGame() {
+    setState(() => _game = null);
+  }
+
+  void _toggleDark() {
+    setState(() => _dark = !_dark);
   }
 
   @override
@@ -78,14 +91,39 @@ class _MovazeAppState extends State<MovazeApp> {
         ),
       ),
       themeMode: _dark ? ThemeMode.dark : ThemeMode.light,
-      home: _ready
-          ? MazeGame(
-              isDark: _dark,
-              onToggleDark: () => setState(() => _dark = !_dark),
-            )
-          : const SplashScreen(),
+      home: !_ready
+          ? const SplashScreen()
+          : _game == null
+              ? HomeScreen(
+                  isDark: _dark,
+                  onToggleDark: _toggleDark,
+                  onPlayLevel: (level) =>
+                      _launch(_GameLaunch(level: level, daily: false)),
+                  onPlayDaily: () =>
+                      _launch(_GameLaunch(level: 1, daily: true)),
+                  onPlayInfinity: () =>
+                      _launch(_GameLaunch(level: 1, daily: false, infinity: true)),
+                )
+              : MazeGame(
+                  isDark: _dark,
+                  onToggleDark: _toggleDark,
+                  onExit: _exitGame,
+                  initialLevel: _game!.level,
+                  dailyMode: _game!.daily,
+                ),
     );
   }
+}
+
+class _GameLaunch {
+  final int level;
+  final bool daily;
+  final bool infinity;
+  const _GameLaunch({
+    required this.level,
+    required this.daily,
+    this.infinity = false,
+  });
 }
 
 class SplashScreen extends StatefulWidget {
@@ -165,6 +203,409 @@ class MazeCell {
   bool left = true;
 }
 
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({
+    super.key,
+    required this.isDark,
+    required this.onToggleDark,
+    required this.onPlayLevel,
+    required this.onPlayDaily,
+    required this.onPlayInfinity,
+  });
+
+  final bool isDark;
+  final VoidCallback onToggleDark;
+  final void Function(int level) onPlayLevel;
+  final VoidCallback onPlayDaily;
+  final VoidCallback onPlayInfinity;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int _maxLevel = 1;
+  int _totalCoins = 0;
+  int _infinityLevel = 1;
+  final Map<int, int> _stars = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final maxLevel = prefs.getInt('maxLevel') ?? 1;
+    final coins = prefs.getInt('totalCoins') ?? 0;
+    final infinityLevel = prefs.getInt('infinityLevel') ?? 1;
+    final stars = <int, int>{};
+    for (var i = 1; i <= maxLevel; i++) {
+      stars[i] = prefs.getInt('level${i}_stars') ?? 0;
+    }
+    if (!mounted) return;
+    setState(() {
+      _maxLevel = maxLevel;
+      _totalCoins = coins;
+      _infinityLevel = infinityLevel;
+      _stars..clear()..addAll(stars);
+    });
+  }
+
+  Future<void> _unlockAll() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('maxLevel', 25);
+    await prefs.setInt('level', 25);
+    if (!mounted) return;
+    setState(() => _maxLevel = 25);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('All levels unlocked (test mode)'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      body: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Row(
+                children: [
+                  const Spacer(),
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        'MOVAZE',
+                        style: TextStyle(
+                          color: scheme.onSurface,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 6,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.monetization_on_outlined,
+                          color: Color(0xFFFFB300), size: 22),
+                      const SizedBox(width: 4),
+                      Text(
+                        '$_totalCoins',
+                        style: TextStyle(
+                          color: scheme.onSurface,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      IconButton(
+                        onPressed: widget.onToggleDark,
+                        icon: Icon(
+                          widget.isDark
+                              ? Icons.light_mode_outlined
+                              : Icons.dark_mode_outlined,
+                          color: scheme.onSurface,
+                        ),
+                        tooltip: widget.isDark ? 'Light mode' : 'Dark mode',
+                      ),
+                      IconButton(
+                        onPressed: _unlockAll,
+                        iconSize: 18,
+                        padding: EdgeInsets.zero,
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.admin_panel_settings,
+                            color: Color(0xFFB39DDB), size: 18),
+                        tooltip: 'Unlock all levels (test)',
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Divider(color: scheme.onSurface, height: 12, thickness: 1),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: scheme.onSurface,
+                        foregroundColor: scheme.surface,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      onPressed: widget.onPlayDaily,
+                      child: const Text(
+                        'DAILY CHALLENGE',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: scheme.onSurface,
+                        foregroundColor: scheme.surface,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      onPressed: () => widget.onPlayLevel(_maxLevel),
+                      child: const Text(
+                        'PLAY',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 2,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                itemCount: _worldCount() + 1,
+                itemBuilder: (context, index) => index < _worldCount()
+                    ? _WorldCard(
+                        world: index + 1,
+                        stars: _stars,
+                        maxLevel: _maxLevel,
+                        onPlay: widget.onPlayLevel,
+                      )
+                    : _InfinityCard(
+                        maxLevel: _maxLevel,
+                        infinityLevel: _infinityLevel,
+                        onPlay: _launchInfinity,
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _launchInfinity() => widget.onPlayInfinity();
+
+  int _worldCount() => 5;
+}
+
+class _WorldCard extends StatelessWidget {
+  const _WorldCard({
+    required this.world,
+    required this.stars,
+    required this.maxLevel,
+    required this.onPlay,
+  });
+
+  final int world;
+  final Map<int, int> stars;
+  final int maxLevel;
+  final void Function(int level) onPlay;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final start = worldStart(world);
+    final end = worldEnd(world);
+    var total = 0;
+    for (var l = start; l <= end; l++) {
+      total += stars[l] ?? 0;
+    }
+    final unlockedLevels =
+        (end <= maxLevel) ? 5 : (maxLevel >= start ? maxLevel - start + 1 : 0);
+    final locked = unlockedLevels <= 0;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: scheme.onSurface.withValues(alpha: locked ? 0.25 : 0.7),
+        ),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'WORLD $world',
+                style: TextStyle(
+                  color: scheme.onSurface,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1,
+                ),
+              ),
+              const Spacer(),
+              const Icon(Icons.star, color: Color(0xFFFFB300), size: 16),
+              const SizedBox(width: 2),
+              Text(
+                '$total/15',
+                style: TextStyle(
+                  color: scheme.onSurface,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: List.generate(5, (i) {
+              final level = start + i;
+              final unlocked = level <= maxLevel;
+              return _LevelTile(
+                level: level,
+                starCount: stars[level] ?? 0,
+                unlocked: unlocked,
+                onTap: unlocked ? () => onPlay(level) : null,
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LevelTile extends StatelessWidget {
+  const _LevelTile({
+    required this.level,
+    required this.starCount,
+    required this.unlocked,
+    required this.onTap,
+  });
+
+  final int level;
+  final int starCount;
+  final bool unlocked;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final dim = unlocked ? 1.0 : 0.3;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 56,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: scheme.onSurface.withValues(alpha: 0.5 * dim),
+          ),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Column(
+          children: [
+            if (unlocked)
+              Text(
+                '$level',
+                style: TextStyle(
+                  color: scheme.onSurface,
+                  fontWeight: FontWeight.bold,
+                ),
+              )
+            else
+              Icon(Icons.lock, color: scheme.onSurface.withValues(alpha: 0.3), size: 18),
+            const SizedBox(height: 4),
+            _StarRow(count: starCount, color: scheme.onSurface, size: 12),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InfinityCard extends StatelessWidget {
+  const _InfinityCard({
+    required this.maxLevel,
+    required this.infinityLevel,
+    required this.onPlay,
+  });
+
+  static const int unlockAt = 25;
+
+  final int maxLevel;
+  final int infinityLevel;
+  final VoidCallback onPlay;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final unlocked = maxLevel >= unlockAt;
+    final bg =
+        unlocked ? scheme.tertiaryContainer : scheme.surfaceContainerHighest;
+    final fg =
+        unlocked ? scheme.onTertiaryContainer : scheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Card(
+        color: bg,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: unlocked ? onPlay : null,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Icon(
+                  unlocked ? Icons.all_inclusive : Icons.lock,
+                  color: fg,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'INFINITY WORLD',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.2,
+                          color: fg,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        unlocked
+                            ? 'All worlds combined · Level $infinityLevel reached'
+                            : 'Clear world 5 to unlock endless levels',
+                        style: TextStyle(color: fg, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+                if (unlocked) Icon(Icons.play_arrow, color: fg),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class TopBanner extends StatefulWidget {
   const TopBanner({super.key});
 
@@ -221,6 +662,7 @@ class Enemy {
   int endIndex;
   int dir;
   double pace;
+  bool isBoss;
 
   Enemy(
     this.row,
@@ -230,26 +672,63 @@ class Enemy {
     required this.endIndex,
     this.dir = 1,
     this.pace = 0.6,
+    this.isBoss = false,
   });
 }
 
 class Maze {
   final int size;
   final List<List<MazeCell>> cells;
+  final Set<(int, int)> coins = {};
+  final Set<(int, int)> keys = {};
+  final Set<(int, int, int, int)> doors = {};
+  final Set<(int, int)> explored = {};
+  (int, int)? boostSpot;
+  (int, int)? shieldSpot;
+  int keysHeld = 0;
+  bool hasShield = false;
+  Enemy? boss;
   int playerRow = 0;
   int playerCol = 0;
   final List<Enemy> enemies = [];
   late List<(int, int)> patrolRoute;
+  late final Random _rng;
+  final bool _keysEnabled;
+  final bool _shieldEnabled;
+  final bool _fogEnabled;
+  final bool _bossEnabled;
 
-  Maze(this.size, {int enemyCount = 0})
-      : cells =
-            List.generate(size, (_) => List.generate(size, (_) => MazeCell())) {
+  bool get hasKeys => _keysEnabled;
+  bool get shieldEnabled => _shieldEnabled;
+  bool get hasFog => _fogEnabled;
+  bool get hasBoss => _bossEnabled;
+
+  Maze(
+    this.size, {
+    int enemyCount = 0,
+    int? seed,
+    bool keys = false,
+    bool shield = true,
+    bool fog = false,
+    bool boss = false,
+    int doorCount = 0,
+  }) : cells =
+            List.generate(size, (_) => List.generate(size, (_) => MazeCell())),
+       _keysEnabled = keys,
+       _shieldEnabled = shield,
+       _fogEnabled = fog,
+       _bossEnabled = boss {
+    _rng = Random(seed);
     _generateWithRetry(enemyCount);
     for (var attempt = 0; attempt < 20; attempt++) {
       _buildPatrolRoute();
       if (enemyCount <= 0 || _hideIndices().length >= enemyCount) break;
     }
     if (enemyCount > 0) _placeEnemies(enemyCount);
+    if (_bossEnabled) _placeBoss();
+    if (_keysEnabled) _placeKeysAndDoors(doorCount);
+    _scatterPickups(enemyCount);
+    explore(0, 0);
   }
 
   void _generateWithRetry(int enemyCount) {
@@ -347,7 +826,7 @@ class Maze {
   }
 
   void _placeEnemies(int count) {
-    final rng = Random();
+    final rng = _rng;
     final L = patrolRoute.length;
 
     // Route positions that sit right next to an off-route dead-end hiding spot.
@@ -418,6 +897,312 @@ class Maze {
         pace: 0.6 + rng.nextDouble() * 0.3,
       ));
     }
+  }
+
+  /// Scatters collectible coins and a single speed-boost pickup on reachable
+  /// cells, never on the start, the goal, or an enemy's spawn point. The
+  /// shield pickup prefers a dead-end hiding spot.
+  void _scatterPickups(int enemyCount) {
+    final seen = List.generate(size, (_) => List<bool>.filled(size, false));
+    final queue = <(int, int)>[(0, 0)];
+    seen[0][0] = true;
+    while (queue.isNotEmpty) {
+      final (r, c) = queue.removeAt(0);
+      final cell = cells[r][c];
+      if (!cell.top && !seen[r - 1][c]) {
+        seen[r - 1][c] = true;
+        queue.add((r - 1, c));
+      }
+      if (!cell.right && !seen[r][c + 1]) {
+        seen[r][c + 1] = true;
+        queue.add((r, c + 1));
+      }
+      if (!cell.bottom && !seen[r + 1][c]) {
+        seen[r + 1][c] = true;
+        queue.add((r + 1, c));
+      }
+      if (!cell.left && !seen[r][c - 1]) {
+        seen[r][c - 1] = true;
+        queue.add((r, c - 1));
+      }
+    }
+
+    final excluded = <(int, int)>{(0, 0), (size - 1, size - 1)};
+    for (final e in enemies) {
+      excluded.add((e.row, e.col));
+    }
+    if (boss != null) excluded.add((boss!.row, boss!.col));
+    for (final k in keys) {
+      excluded.add(k);
+    }
+    for (final d in doors) {
+      excluded.add((d.$1, d.$2));
+      excluded.add((d.$3, d.$4));
+    }
+    bool isDeadEnd(int r, int c) {
+      final cell = cells[r][c];
+      var open = 0;
+      if (!cell.top) open++;
+      if (!cell.bottom) open++;
+      if (!cell.left) open++;
+      if (!cell.right) open++;
+      return open == 1;
+    }
+
+    final candidates = <(int, int)>[];
+    final deadEnds = <(int, int)>[];
+    for (var r = 0; r < size; r++) {
+      for (var c = 0; c < size; c++) {
+        if (!seen[r][c] || excluded.contains((r, c))) continue;
+        (isDeadEnd(r, c) ? deadEnds : candidates).add((r, c));
+      }
+    }
+    candidates.shuffle(_rng);
+    deadEnds.shuffle(_rng);
+
+    final all = <(int, int)>[...candidates, ...deadEnds];
+    final coinCount = min(2 + enemyCount, all.length);
+    coins.addAll(all.take(coinCount));
+    final used = <(int, int)>{...coins};
+
+    (int, int)? takeDeadEnd() {
+      for (final d in deadEnds) {
+        if (!used.contains(d)) {
+          used.add(d);
+          return d;
+        }
+      }
+      return null;
+    }
+
+    (int, int)? takeAny(int from) {
+      if (from >= all.length) return null;
+      for (var i = from; i < all.length; i++) {
+        if (!used.contains(all[i])) {
+          used.add(all[i]);
+          return all[i];
+        }
+      }
+      return null;
+    }
+
+    if (_shieldEnabled) shieldSpot = takeDeadEnd() ?? takeAny(coinCount);
+    boostSpot = takeDeadEnd() ?? takeAny(coinCount);
+  }
+
+  /// Consumes any pickup at [r],[c], reporting what was collected.
+  ({bool coin, bool boost, bool key, bool shield}) takePickup(int r, int c) {
+    final hadCoin = coins.remove((r, c));
+    final hadBoost = boostSpot == (r, c);
+    if (hadBoost) boostSpot = null;
+    final hadKey = keys.remove((r, c));
+    if (hadKey) keysHeld++;
+    final hadShield = shieldSpot == (r, c);
+    if (hadShield) {
+      shieldSpot = null;
+      hasShield = true;
+    }
+    return (coin: hadCoin, boost: hadBoost, key: hadKey, shield: hadShield);
+  }
+
+  /// Reveals cells within a short radius of [r],[c] for the fog of war.
+  void explore(int r, int c) {
+    for (var dr = -2; dr <= 2; dr++) {
+      for (var dc = -2; dc <= 2; dc++) {
+        if (dr.abs() + dc.abs() > 2) continue;
+        final nr = r + dr;
+        final nc = c + dc;
+        if (nr < 0 || nr >= size || nc < 0 || nc >= size) continue;
+        explored.add((nr, nc));
+      }
+    }
+  }
+
+  (int, int, int, int) _normDoor(int r1, int c1, int r2, int c2) {
+    final a = r1 * size + c1;
+    final b = r2 * size + c2;
+    return a < b ? (r1, c1, r2, c2) : (r2, c2, r1, c1);
+  }
+
+  (int, int, int, int)? _doorAt(int r, int c, int nr, int nc) {
+    final d = _normDoor(r, c, nr, nc);
+    return doors.contains(d) ? d : null;
+  }
+
+  /// Unique solution path cells from start to goal, in order.
+  List<(int, int)> _solutionPath() {
+    final parent =
+        List.generate(size, (_) => List<(int, int)?>.filled(size, null));
+    final queue = <(int, int)>[(0, 0)];
+    parent[0][0] = (0, 0);
+    while (queue.isNotEmpty) {
+      final (r, c) = queue.removeAt(0);
+      if (r == size - 1 && c == size - 1) break;
+      final cell = cells[r][c];
+      void tryAdd(int nr, int nc) {
+        if (parent[nr][nc] != null) return;
+        parent[nr][nc] = (r, c);
+        queue.add((nr, nc));
+      }
+
+      if (!cell.top) tryAdd(r - 1, c);
+      if (!cell.right) tryAdd(r, c + 1);
+      if (!cell.bottom) tryAdd(r + 1, c);
+      if (!cell.left) tryAdd(r, c - 1);
+    }
+    final path = <(int, int)>[];
+    var (sr, sc) = (size - 1, size - 1);
+    while (parent[sr][sc] != null && parent[sr][sc] != (sr, sc)) {
+      path.add((sr, sc));
+      final p = parent[sr][sc]!;
+      sr = p.$1;
+      sc = p.$2;
+    }
+    path.add((0, 0));
+    return path.reversed.toList();
+  }
+
+  /// Cells reachable from the start treating every locked door as a wall.
+  List<List<bool>> _reachableIgnoringDoors() {
+    final seen = List.generate(size, (_) => List<bool>.filled(size, false));
+    final queue = <(int, int)>[(0, 0)];
+    seen[0][0] = true;
+    while (queue.isNotEmpty) {
+      final (r, c) = queue.removeAt(0);
+      final cell = cells[r][c];
+      void tryAdd(int nr, int nc) {
+        if (seen[nr][nc]) return;
+        if (_doorAt(r, c, nr, nc) != null) return;
+        seen[nr][nc] = true;
+        queue.add((nr, nc));
+      }
+
+      if (!cell.top) tryAdd(r - 1, c);
+      if (!cell.right) tryAdd(r, c + 1);
+      if (!cell.bottom) tryAdd(r + 1, c);
+      if (!cell.left) tryAdd(r, c - 1);
+    }
+    return seen;
+  }
+
+  /// Locks doors onto the solution path and scatters a matching number of
+  /// keys on cells reachable from the start without opening any door, so the
+  /// player always collects enough keys before hitting a locked door.
+  void _placeKeysAndDoors(int doorCount) {
+    if (doorCount <= 0) return;
+    final path = _solutionPath();
+    final L = path.length;
+    if (L < 10) return;
+    final lo = (L * 0.35).floor().clamp(1, L - 2);
+    final hi = (L * 0.75).ceil().clamp(1, L - 2);
+    if (hi <= lo) return;
+    final chosen = <int>[];
+    for (var i = 0; i < doorCount; i++) {
+      var guard = 0;
+      while (guard++ < 64) {
+        final idx = lo + _rng.nextInt(hi - lo + 1);
+        if (!chosen.contains(idx)) {
+          chosen.add(idx);
+          break;
+        }
+      }
+    }
+    chosen.sort();
+    for (final k in chosen) {
+      final (r1, c1) = path[k];
+      final (r2, c2) = path[k + 1];
+      doors.add(_normDoor(r1, c1, r2, c2));
+    }
+
+    final reachable = _reachableIgnoringDoors();
+    final excluded = <(int, int)>{(0, 0), (size - 1, size - 1)};
+    for (final d in doors) {
+      excluded.add((d.$1, d.$2));
+      excluded.add((d.$3, d.$4));
+    }
+    for (final e in enemies) {
+      excluded.add((e.row, e.col));
+    }
+    if (boss != null) excluded.add((boss!.row, boss!.col));
+    final candidates = <(int, int)>[];
+    final deadEnds = <(int, int)>[];
+    for (var r = 0; r < size; r++) {
+      for (var c = 0; c < size; c++) {
+        if (!reachable[r][c] || excluded.contains((r, c))) continue;
+        final cell = cells[r][c];
+        var open = 0;
+        if (!cell.top) open++;
+        if (!cell.bottom) open++;
+        if (!cell.left) open++;
+        if (!cell.right) open++;
+        (open == 1 ? deadEnds : candidates).add((r, c));
+      }
+    }
+    candidates.shuffle(_rng);
+    deadEnds.shuffle(_rng);
+
+    if (doors.length > candidates.length + deadEnds.length) {
+      final keep = doors.take(candidates.length + deadEnds.length).toList();
+      doors
+        ..clear()
+        ..addAll(keep);
+    }
+    // Keys hide in dead-end cells first so grabbing one means exploring a
+    // hiding spot, then fall back to any reachable cell.
+    keys.addAll([...deadEnds, ...candidates].take(doors.length));
+  }
+
+  void _placeBoss() {
+    if (patrolRoute.isEmpty) return;
+    final used = {for (final e in enemies) e.patrolIndex};
+    var idx = patrolRoute.length ~/ 2;
+    for (var i = 0; i < patrolRoute.length; i++) {
+      final cand = (patrolRoute.length ~/ 2 + i) % patrolRoute.length;
+      if (!used.contains(cand)) {
+        idx = cand;
+        break;
+      }
+    }
+    final (r, c) = patrolRoute[idx];
+    boss = Enemy(
+      r,
+      c,
+      idx,
+      startIndex: 0,
+      endIndex: patrolRoute.length - 1,
+      dir: 1,
+      pace: 1.0,
+      isBoss: true,
+    );
+  }
+
+  /// Length of the unique solution path from start to goal.
+  int solutionLength() {
+    final dist = List.generate(size, (_) => List<int>.filled(size, -1));
+    final queue = <(int, int)>[(0, 0)];
+    dist[0][0] = 0;
+    while (queue.isNotEmpty) {
+      final (r, c) = queue.removeAt(0);
+      if (r == size - 1 && c == size - 1) break;
+      final cell = cells[r][c];
+      if (!cell.top && dist[r - 1][c] == -1) {
+        dist[r - 1][c] = dist[r][c] + 1;
+        queue.add((r - 1, c));
+      }
+      if (!cell.right && dist[r][c + 1] == -1) {
+        dist[r][c + 1] = dist[r][c] + 1;
+        queue.add((r, c + 1));
+      }
+      if (!cell.bottom && dist[r + 1][c] == -1) {
+        dist[r + 1][c] = dist[r][c] + 1;
+        queue.add((r + 1, c));
+      }
+      if (!cell.left && dist[r][c - 1] == -1) {
+        dist[r][c - 1] = dist[r][c] + 1;
+        queue.add((r, c - 1));
+      }
+    }
+    return dist[size - 1][size - 1];
   }
 
   void _buildPatrolRoute() {
@@ -510,15 +1295,13 @@ class Maze {
       }
     }
 
-    // Dead-end branches stay off the patrol route so they are safe hiding
-    // spots for the player, and the goal cell is never patrolled either so
-    // the level can always be won.
-
     // Patrol walk: a self-avoiding snake over the main backbone, so every cell
     // appears exactly once. Enemies own exclusive arcs of it, so they can never
     // share a cell or block each other. The goal is never patrolled so the
-    // level can always be won.
-    final rng = Random();
+    // level can always be won. The walk is anchored in a bottom-half dead-end
+    // cell (a real cul-de-sac) so the patrol always includes a dead end the
+    // enemies walk into and turn around at.
+    final rng = _rng;
     final starts = <(int, int)>[];
     for (var r = mid; r < size; r++) {
       for (var c = 0; c < size; c++) {
@@ -527,51 +1310,112 @@ class Maze {
         }
       }
     }
+    final anchors = <(int, int)>[];
+    for (var r = mid; r < size; r++) {
+      for (var c = 0; c < size; c++) {
+        if (r == size - 1 && c == size - 1) continue;
+        final n = _openNeighbours(r, c);
+        if (n.length != 1) continue;
+        final (nr, nc) = n.single;
+        if (nr == size - 1 && nc == size - 1) continue;
+        anchors.add((r, c));
+      }
+    }
     var best = <(int, int)>[];
     for (var attempt = 0; attempt < 100; attempt++) {
       final visited =
           List.generate(size, (_) => List<bool>.filled(size, false));
-      final start = starts[rng.nextInt(starts.length)];
-      final route = <(int, int)>[start];
-      visited[start.$1][start.$2] = true;
+      final start = anchors.isNotEmpty
+          ? anchors[rng.nextInt(anchors.length)]
+          : starts[rng.nextInt(starts.length)];
+      final route = <(int, int)>[];
       var (r, c) = start;
+      // Walk the dead-end spur from the anchor leaf out to the backbone, so
+      // the patrol always begins in a real cul-de-sac.
       while (true) {
-        final cell = cells[r][c];
-        final options = <(int, int)>[];
-        if (r > mid && !visited[r - 1][c] && !cell.top && main[r - 1][c]) {
-          options.add((r - 1, c));
-        }
-        if (c < size - 1 &&
-            !visited[r][c + 1] &&
-            !cell.right &&
-            main[r][c + 1]) {
-          options.add((r, c + 1));
-        }
-        if (r < size - 1 &&
-            !visited[r + 1][c] &&
-            !cell.bottom &&
-            main[r + 1][c]) {
-          options.add((r + 1, c));
-        }
-        if (c > 0 && !visited[r][c - 1] && !cell.left && main[r][c - 1]) {
-          options.add((r, c - 1));
-        }
-        options.removeWhere((p) => p == (size - 1, size - 1));
-        if (options.isEmpty) break;
-        options.sort(
-          (a, b) => _onwardCount(a.$1, a.$2, visited, main, mid).compareTo(
-                _onwardCount(b.$1, b.$2, visited, main, mid),
-              ),
-        );
-        final n = options[rng.nextInt(min(2, options.length))];
-        r = n.$1;
-        c = n.$2;
-        visited[r][c] = true;
         route.add((r, c));
+        visited[r][c] = true;
+        if (main[r][c]) break;
+        final open = _openNeighbours(r, c)
+            .where((p) => !visited[p.$1][p.$2])
+            .toList();
+        if (open.length != 1) break;
+        final (nr, nc) = open.single;
+        if (nr == size - 1 && nc == size - 1) break;
+        r = nr;
+        c = nc;
+      }
+      if (main[r][c]) {
+        while (true) {
+          final cell = cells[r][c];
+          final options = <(int, int)>[];
+          if (r > mid && !visited[r - 1][c] && !cell.top && main[r - 1][c]) {
+            options.add((r - 1, c));
+          }
+          if (c < size - 1 &&
+              !visited[r][c + 1] &&
+              !cell.right &&
+              main[r][c + 1]) {
+            options.add((r, c + 1));
+          }
+          if (r < size - 1 &&
+              !visited[r + 1][c] &&
+              !cell.bottom &&
+              main[r + 1][c]) {
+            options.add((r + 1, c));
+          }
+          if (c > 0 && !visited[r][c - 1] && !cell.left && main[r][c - 1]) {
+            options.add((r, c - 1));
+          }
+          options.removeWhere((p) => p == (size - 1, size - 1));
+          if (options.isEmpty) {
+            // If the walk gets stuck beside a dead-end hiding spot, end the
+            // patrol there so the route finishes in a second cul-de-sac.
+            final leaf = _deadEndBeside(r, c, visited);
+            if (leaf != null) {
+              visited[leaf.$1][leaf.$2] = true;
+              route.add(leaf);
+            }
+            break;
+          }
+          options.sort(
+            (a, b) => _onwardCount(a.$1, a.$2, visited, main, mid).compareTo(
+                  _onwardCount(b.$1, b.$2, visited, main, mid),
+                ),
+          );
+          final n = options[rng.nextInt(min(2, options.length))];
+          r = n.$1;
+          c = n.$2;
+          visited[r][c] = true;
+          route.add((r, c));
+        }
       }
       if (route.length > best.length) best = route;
     }
     patrolRoute = best;
+  }
+
+  List<(int, int)> _openNeighbours(int r, int c) {
+    final cell = cells[r][c];
+    final list = <(int, int)>[];
+    if (r > 0 && !cell.top) list.add((r - 1, c));
+    if (r < size - 1 && !cell.bottom) list.add((r + 1, c));
+    if (c > 0 && !cell.left) list.add((r, c - 1));
+    if (c < size - 1 && !cell.right) list.add((r, c + 1));
+    return list;
+  }
+
+  /// A bottom-half dead-end cell next to [r],[c] whose only open neighbour is
+  /// [r],[c] itself, or null if there is none.
+  (int, int)? _deadEndBeside(int r, int c, List<List<bool>> visited) {
+    for (final (nr, nc) in [(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)]) {
+      if (nr < 0 || nr >= size || nc < 0 || nc >= size) continue;
+      if (visited[nr][nc]) continue;
+      if (nr == size - 1 && nc == size - 1) continue;
+      final n = _openNeighbours(nr, nc);
+      if (n.length == 1 && n.single == (r, c)) return (nr, nc);
+    }
+    return null;
   }
 
   int _onwardCount(
@@ -597,7 +1441,7 @@ class Maze {
   void _generate() {
     final visited =
         List.generate(size, (_) => List<bool>.filled(size, false));
-    final rng = Random();
+    final rng = _rng;
     final mid = size ~/ 2;
     var visitedCount = 0;
     final total = size * size;
@@ -894,6 +1738,12 @@ class Maze {
     if (dr == 1 && cur.bottom) return false;
     if (dc == -1 && cur.left) return false;
     if (dc == 1 && cur.right) return false;
+    final door = _doorAt(playerRow, playerCol, nr, nc);
+    if (door != null) {
+      if (keysHeld <= 0) return false;
+      keysHeld--;
+      doors.remove(door);
+    }
     playerRow = nr;
     playerCol = nc;
     return true;
@@ -953,6 +1803,8 @@ class Maze {
     for (final e in enemies) {
       if (e.row == r && e.col == c) return e;
     }
+    final b = boss;
+    if (b != null && b.row == r && b.col == c) return b;
     return null;
   }
 
@@ -1002,45 +1854,64 @@ class MazePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final cell = size.width / maze.size;
+    final fog = maze.hasFog;
+    bool visible(int r, int c) => !fog || maze.explored.contains((r, c));
     final wall = Paint()
       ..color = fg
       ..strokeWidth = max(1.0, cell * 0.12)
       ..strokeCap = StrokeCap.square;
+
+    if (fog) {
+      final fogPaint = Paint()..color = bg;
+      for (var r = 0; r < maze.size; r++) {
+        for (var c = 0; c < maze.size; c++) {
+          if (!visible(r, c)) {
+            canvas.drawRect(
+              Rect.fromLTWH(c * cell, r * cell, cell, cell),
+              fogPaint,
+            );
+          }
+        }
+      }
+    }
 
     for (int r = 0; r < maze.size; r++) {
       for (int c = 0; c < maze.size; c++) {
         final x = c * cell;
         final y = r * cell;
         final m = maze.cells[r][c];
-        if (m.top) {
+        if (m.top && (visible(r, c) || (r > 0 && visible(r - 1, c)))) {
           canvas.drawLine(Offset(x, y), Offset(x + cell, y), wall);
         }
-        if (m.left) {
+        if (m.left && (visible(r, c) || (c > 0 && visible(r, c - 1)))) {
           canvas.drawLine(Offset(x, y), Offset(x, y + cell), wall);
         }
-        if (m.bottom && r == maze.size - 1) {
+        if (m.bottom && r == maze.size - 1 && visible(r, c)) {
           canvas.drawLine(Offset(x, y + cell), Offset(x + cell, y + cell), wall);
         }
-        if (m.right && c == maze.size - 1) {
+        if (m.right && c == maze.size - 1 && visible(r, c)) {
           canvas.drawLine(Offset(x + cell, y), Offset(x + cell, y + cell), wall);
         }
       }
     }
 
-    final goal = Paint()
-      ..color = fg
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = max(1.0, cell * 0.14);
-    final gx = (maze.size - 1) * cell;
-    final gy = (maze.size - 1) * cell;
-    final gRect =
-        Rect.fromLTWH(gx + cell * 0.22, gy + cell * 0.22, cell * 0.56, cell * 0.56);
-    canvas.drawRect(gRect, Paint()..color = bg);
-    canvas.drawRect(gRect, goal);
-    canvas.drawRect(
-      Rect.fromLTWH(gx + cell * 0.42, gy + cell * 0.42, cell * 0.16, cell * 0.16),
-      Paint()..color = fg,
-    );
+    if (visible(maze.size - 1, maze.size - 1)) {
+      final goal = Paint()
+        ..color = fg
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = max(1.0, cell * 0.14);
+      final gx = (maze.size - 1) * cell;
+      final gy = (maze.size - 1) * cell;
+      final gRect = Rect.fromLTWH(
+          gx + cell * 0.22, gy + cell * 0.22, cell * 0.56, cell * 0.56);
+      canvas.drawRect(gRect, Paint()..color = bg);
+      canvas.drawRect(gRect, goal);
+      canvas.drawRect(
+        Rect.fromLTWH(
+            gx + cell * 0.42, gy + cell * 0.42, cell * 0.16, cell * 0.16),
+        Paint()..color = fg,
+      );
+    }
 
     final playerRect = Rect.fromLTWH(
       maze.playerCol * cell + cell * 0.14,
@@ -1059,11 +1930,136 @@ class MazePainter extends CustomPainter {
 
     final enemyPaint = Paint()..color = fg;
     for (final e in maze.enemies) {
+      if (!visible(e.row, e.col)) continue;
       canvas.drawCircle(
         Offset(e.col * cell + cell * 0.5, e.row * cell + cell * 0.5),
         cell * 0.32,
         enemyPaint,
       );
+    }
+
+    final boss = maze.boss;
+    if (boss != null && visible(boss.row, boss.col)) {
+      final bcx = boss.col * cell + cell * 0.5;
+      final bcy = boss.row * cell + cell * 0.5;
+      canvas.drawCircle(
+        Offset(bcx, bcy),
+        cell * 0.4,
+        Paint()..color = const Color(0xFFE53935),
+      );
+      canvas.drawCircle(
+        Offset(bcx - cell * 0.14, bcy - cell * 0.05),
+        cell * 0.09,
+        Paint()..color = Colors.white,
+      );
+      canvas.drawCircle(
+        Offset(bcx + cell * 0.14, bcy - cell * 0.05),
+        cell * 0.09,
+        Paint()..color = Colors.white,
+      );
+      canvas.drawCircle(
+        Offset(bcx - cell * 0.12, bcy - cell * 0.04),
+        cell * 0.045,
+        Paint()..color = Colors.black,
+      );
+      canvas.drawCircle(
+        Offset(bcx + cell * 0.16, bcy - cell * 0.04),
+        cell * 0.045,
+        Paint()..color = Colors.black,
+      );
+    }
+
+    final coinPaint = Paint()..color = const Color(0xFFFFB300);
+    for (final (r, c) in maze.coins) {
+      if (!visible(r, c)) continue;
+      canvas.drawCircle(
+        Offset(c * cell + cell * 0.5, r * cell + cell * 0.5),
+        cell * 0.18,
+        coinPaint,
+      );
+    }
+
+    final keyColor = const Color(0xFFFFB300);
+    final keyStroke = Paint()
+      ..color = keyColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = max(1.0, cell * 0.07);
+    final keyFill = Paint()..color = keyColor;
+    for (final (r, c) in maze.keys) {
+      if (!visible(r, c)) continue;
+      final cx = c * cell + cell * 0.5;
+      final cy = r * cell + cell * 0.5;
+      canvas.drawCircle(Offset(cx - cell * 0.12, cy), cell * 0.1, keyStroke);
+      canvas.drawLine(
+          Offset(cx - cell * 0.02, cy), Offset(cx + cell * 0.2, cy), keyFill);
+      canvas.drawLine(Offset(cx + cell * 0.12, cy),
+          Offset(cx + cell * 0.12, cy + cell * 0.1), keyFill);
+      canvas.drawLine(Offset(cx + cell * 0.2, cy),
+          Offset(cx + cell * 0.2, cy + cell * 0.08), keyFill);
+    }
+
+    final lockedPaint = Paint()
+      ..color = const Color(0xFFFB8C00)
+      ..strokeWidth = max(2.0, cell * 0.22)
+      ..strokeCap = StrokeCap.round;
+    // Once the player holds a key the doors read as open (a thin, faded line)
+    // so collecting a key visibly unlocks them.
+    final openPaint = Paint()
+      ..color = const Color(0xFFFB8C00).withValues(alpha: 0.35)
+      ..strokeWidth = max(1.0, cell * 0.05)
+      ..strokeCap = StrokeCap.round;
+    final doorPaint = maze.keysHeld > 0 ? openPaint : lockedPaint;
+    for (final d in maze.doors) {
+      if (!visible(d.$1, d.$2) && !visible(d.$3, d.$4)) continue;
+      if (d.$1 == d.$3) {
+        final x = max(d.$2, d.$4) * cell;
+        final y = d.$1 * cell;
+        canvas.drawLine(Offset(x, y), Offset(x, y + cell), doorPaint);
+      } else {
+        final y = max(d.$1, d.$3) * cell;
+        final x = d.$2 * cell;
+        canvas.drawLine(Offset(x, y), Offset(x + cell, y), doorPaint);
+      }
+    }
+
+    final boost = maze.boostSpot;
+    if (boost != null && visible(boost.$1, boost.$2)) {
+      final (br, bc) = boost;
+      final cx = bc * cell + cell * 0.5;
+      final cy = br * cell + cell * 0.5;
+      // The exact Material "ac_unit" snowflake glyph, matching the FROZEN
+      // indicator and the freeze buy chip.
+      final tp = TextPainter(
+        text: TextSpan(
+          text: String.fromCharCode(Icons.ac_unit.codePoint),
+          style: TextStyle(
+            fontSize: cell * 0.55,
+            fontFamily: Icons.ac_unit.fontFamily,
+            package: Icons.ac_unit.fontPackage,
+            color: const Color(0xFF26A69A),
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(cx - tp.width / 2, cy - tp.height / 2));
+    }
+
+    final shield = maze.shieldSpot;
+    if (shield != null && visible(shield.$1, shield.$2)) {
+      final (sr, sc) = shield;
+      final cx = sc * cell + cell * 0.5;
+      final cy = sr * cell + cell * 0.5;
+      final r = cell * 0.28;
+      final path = Path()
+        ..moveTo(cx, cy - r)
+        ..quadraticBezierTo(cx - r, cy - r * 0.7, cx - r, cy - r * 0.15)
+        ..lineTo(cx - r, cy + r * 0.4)
+        ..lineTo(cx, cy + r)
+        ..lineTo(cx + r, cy + r * 0.4)
+        ..lineTo(cx + r, cy - r * 0.15)
+        ..quadraticBezierTo(cx + r, cy - r * 0.7, cx, cy - r)
+        ..close();
+      canvas.drawPath(path, Paint()..color = const Color(0xFF26A69A));
     }
   }
 
@@ -1075,14 +2071,58 @@ class MazePainter extends CustomPainter {
 }
 
 class MazeGame extends StatefulWidget {
-  const MazeGame({super.key, required this.isDark, required this.onToggleDark});
+  const MazeGame({
+    super.key,
+    required this.isDark,
+    required this.onToggleDark,
+    this.onExit,
+    this.initialLevel = 1,
+    this.dailyMode = false,
+    this.dailySeed,
+    this.infinityMode = false,
+  });
 
   final bool isDark;
   final VoidCallback onToggleDark;
+  final VoidCallback? onExit;
+  final int initialLevel;
+  final bool dailyMode;
+  final int? dailySeed;
+  final bool infinityMode;
 
   @override
   State<MazeGame> createState() => _MazeGameState();
 }
+
+int mazeSizeForLevel(int level) => 2 * level + 5;
+
+int infinitySizeForLevel(int level) => min(23, 11 + 2 * ((level - 1) ~/ 2));
+
+int infinityEnemyCountForLevel(int level) => min(1 + (level - 1) ~/ 2, 10);
+
+int infinityDoorCountForLevel(int level) => min(2 + (level - 1) ~/ 5, 3);
+
+int enemyCountForLevel(int level) =>
+    level % 5 == 0 ? max(1, level ~/ 2) : level;
+
+int doorCountForLevel(int level) => level < 5 ? 0 : (level >= 10 ? 3 : 2);
+
+bool hasKeysForLevel(int level) => level >= 5;
+
+bool hasFogForLevel(int level) => level >= 10;
+
+bool hasBossForLevel(int level) => level % 5 == 0;
+
+bool hasShieldForLevel(int level) => true;
+
+/// Number of stars a [level] sits inside, 1-based (level 5 is world 1).
+int worldForLevel(int level) => (level - 1) ~/ 5 + 1;
+
+/// First level of a [world].
+int worldStart(int world) => (world - 1) * 5 + 1;
+
+/// Last level of a [world].
+int worldEnd(int world) => world * 5;
 
 class _MazeGameState extends State<MazeGame> {
   late Maze _maze;
@@ -1091,11 +2131,28 @@ class _MazeGameState extends State<MazeGame> {
 
   int _level = 1;
   int _maxLevel = 1;
+  int _totalCoins = 0;
+  int _coinsThisLevel = 0;
+  int _coinCount = 0;
+  int _catches = 0;
+  int _moves = 0;
   bool _solving = false;
   bool _vibrationEnabled = true;
+  bool _boosted = false;
+  bool _dailyMode = false;
+  bool _infinityMode = false;
+  bool _dailyDone = false;
+  int _dailyLevel = 1;
+  int _savedLevel = 1;
+  DateTime _graceUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  static const int _shieldCost = 10;
+  static const int _freezeCost = 5;
   Timer? _enemyTimer;
+  Timer? _boostTimer;
   RewardedAd? _rewardedAd;
   bool _rewardedAdLoading = false;
+  final Map<int, int> _starsByLevel = {};
+  final Map<int, int> _bestMovesByLevel = {};
 
   final ValueNotifier<int> _revision = ValueNotifier<int>(0);
 
@@ -1104,10 +2161,25 @@ class _MazeGameState extends State<MazeGame> {
   @override
   void initState() {
     super.initState();
-    _maze = Maze(
-      _mazeSizeForLevel(_level),
-      enemyCount: _enemyCountForLevel(_level),
-    );
+    _dailyMode = widget.dailyMode;
+    _infinityMode = widget.infinityMode;
+    _level = widget.initialLevel;
+    _maxLevel = max(widget.initialLevel, 1);
+    if (_dailyMode) {
+      _dailyLevel = 1 + (widget.dailySeed ?? _dailySeed) % 9;
+      _level = _dailyLevel;
+    }
+    _maze = _infinityMode
+        ? _infinityMaze()
+        : Maze(
+            mazeSizeForLevel(_level),
+            enemyCount: enemyCountForLevel(_level),
+            keys: hasKeysForLevel(_level),
+            shield: hasShieldForLevel(_level),
+            fog: hasFogForLevel(_level),
+            boss: hasBossForLevel(_level),
+            doorCount: doorCountForLevel(_level),
+          );
     _loadProgress();
     _focusNode.requestFocus();
     _loadRewardedAd();
@@ -1116,6 +2188,7 @@ class _MazeGameState extends State<MazeGame> {
   @override
   void dispose() {
     _enemyTimer?.cancel();
+    _boostTimer?.cancel();
     _rewardedAd?.dispose();
     _revision.dispose();
     _focusNode.dispose();
@@ -1127,16 +2200,83 @@ class _MazeGameState extends State<MazeGame> {
     return ms < 300 ? 300 : ms;
   }
 
+  bool get _graceActive => DateTime.now().isBefore(_graceUntil);
+
+  String get _todayKey {
+    final now = DateTime.now();
+    return '${now.year}-${now.month}-${now.day}';
+  }
+
+  int get _dailySeed {
+    if (widget.dailySeed != null) return widget.dailySeed!;
+    final now = DateTime.now();
+    return now.year * 10000 + now.month * 100 + now.day;
+  }
+
   Future<void> _loadProgress() async {
     final prefs = await SharedPreferences.getInstance();
-    final savedMax = prefs.getInt('maxLevel') ?? 1;
-    final saved = prefs.getInt('level') ?? savedMax;
+    final savedMax = prefs.getInt('maxLevel');
+    final saved = prefs.getInt('level');
+    final savedInfinity = prefs.getInt('infinityLevel') ?? widget.initialLevel;
+    final totalCoins = prefs.getInt('totalCoins') ?? 0;
+    final dailyDone = prefs.getBool('dailyDone_$_todayKey') ?? false;
     if (!mounted) return;
     setState(() {
-      _maxLevel = max(savedMax, 1);
-      _level = saved.clamp(1, _maxLevel);
+      _maxLevel = min(max(savedMax ?? 1, widget.initialLevel), 25);
+      if (_infinityMode) {
+        _level = savedInfinity;
+      } else if (!_dailyMode) {
+        if (saved != null) {
+          _level = saved.clamp(1, _maxLevel);
+        } else {
+          _level = widget.initialLevel.clamp(1, _maxLevel);
+        }
+      }
+      _totalCoins = totalCoins;
+      _dailyDone = dailyDone;
     });
+    for (var i = 1; i <= _maxLevel; i++) {
+      _starsByLevel[i] = prefs.getInt('level${i}_stars') ?? 0;
+      _bestMovesByLevel[i] = prefs.getInt('level${i}_bestMoves') ?? 0;
+    }
     _newMaze();
+    if (_dailyMode || _infinityMode) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _showModeHint());
+    }
+  }
+
+  void _showModeHint() {
+    if (!mounted) return;
+    final scheme = Theme.of(context).colorScheme;
+    final title = _dailyMode ? 'DAILY CHALLENGE' : 'INFINITY WORLD';
+    final body = _dailyMode
+        ? 'Find the exit before the timer runs out and earn bonus coins.'
+        : 'Every world combined into one endless maze. Reach the exit, level after level.';
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: scheme.surface,
+        title: Text(
+          title,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Text(
+          body,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: scheme.onSurface),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('OK', style: TextStyle(color: scheme.onSurface)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _saveProgress() async {
@@ -1145,18 +2285,54 @@ class _MazeGameState extends State<MazeGame> {
     await prefs.setInt('maxLevel', _maxLevel);
   }
 
+  Future<void> _saveInfinity() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('infinityLevel', _level);
+  }
+
+  Future<void> _saveTotalCoins() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('totalCoins', _totalCoins);
+  }
+
   void _goToLevel(int level) {
+    if (_dailyMode || _infinityMode) return;
     if (level < 1 || level > _maxLevel || level == _level) return;
     setState(() => _level = level);
     _saveProgress();
     _newMaze();
   }
 
-  void _newMaze() {
-    _maze = Maze(
-      _mazeSizeForLevel(_level),
-      enemyCount: _enemyCountForLevel(_level),
-    );
+  Maze _infinityMaze() => Maze(
+        infinitySizeForLevel(_level),
+        enemyCount: infinityEnemyCountForLevel(_level),
+        keys: true,
+        shield: true,
+        fog: true,
+        boss: true,
+        doorCount: infinityDoorCountForLevel(_level),
+      );
+
+  void _newMaze({int? seed}) {
+    _maze = _infinityMode
+        ? _infinityMaze()
+        : Maze(
+            mazeSizeForLevel(_level),
+            enemyCount: enemyCountForLevel(_level),
+            seed: seed,
+            keys: hasKeysForLevel(_level),
+            shield: hasShieldForLevel(_level),
+            fog: hasFogForLevel(_level),
+            boss: hasBossForLevel(_level),
+            doorCount: doorCountForLevel(_level),
+          );
+    _coinsThisLevel = 0;
+    _coinCount = _maze.coins.length;
+    _catches = 0;
+    _moves = 0;
+    _boosted = false;
+    _boostTimer?.cancel();
+    _graceUntil = DateTime.fromMillisecondsSinceEpoch(0);
     _revision.value++;
     _startEnemyTimer();
   }
@@ -1185,27 +2361,39 @@ class _MazeGameState extends State<MazeGame> {
       Duration(milliseconds: _enemyIntervalMs),
       (_) {
         if (!mounted || _solving) return;
-        if (_advanceEnemies()) _caught();
+        if (_boosted) return;
+        if (_advanceEnemies() && !_graceActive) _caught();
       },
     );
   }
-
-  int _mazeSizeForLevel(int level) => 2 * level + 5;
-
-  int _enemyCountForLevel(int level) => level;
 
   void _move(int dr, int dc) {
     if (_solving) return;
     if (!_maze.move(dr, dc)) return;
     setState(() {
       _revision.value++;
+      _moves++;
+      final pickup = _maze.takePickup(_maze.playerRow, _maze.playerCol);
+      if (pickup.coin) {
+        _coinsThisLevel++;
+        _totalCoins++;
+        _saveTotalCoins();
+      }
+      if (pickup.boost) {
+        _boosted = true;
+        _boostTimer?.cancel();
+        _boostTimer = Timer(const Duration(seconds: 10), () {
+          if (mounted) setState(() => _boosted = false);
+        });
+      }
+      _maze.explore(_maze.playerRow, _maze.playerCol);
     });
     _vibrate();
     if (_maze.isGoal()) {
       _levelComplete();
       return;
     }
-    if (_playerOnEnemy()) _caught();
+    if (_playerOnEnemy() && !_graceActive) _caught();
   }
 
   Future<void> _vibrate() async {
@@ -1215,22 +2403,69 @@ class _MazeGameState extends State<MazeGame> {
     } catch (_) {}
   }
 
-  bool _playerOnEnemy() => _maze.enemies.any(
-        (e) => e.row == _maze.playerRow && e.col == _maze.playerCol,
-      );
+  bool _playerOnEnemy() {
+    if (_maze.enemies
+        .any((e) => e.row == _maze.playerRow && e.col == _maze.playerCol)) {
+      return true;
+    }
+    final boss = _maze.boss;
+    return boss != null &&
+        boss.row == _maze.playerRow &&
+        boss.col == _maze.playerCol;
+  }
 
   bool _advanceEnemies() {
-    if (_maze.enemies.isEmpty) return false;
     final rng = Random();
     for (final e in _maze.enemies) {
       _maze.advanceEnemy(e, rng: rng);
     }
+    final boss = _maze.boss;
+    if (boss != null) _maze.advanceEnemy(boss, rng: rng);
     _revision.value++;
     return _playerOnEnemy();
   }
 
+  void _buyShield() {
+    if (_solving || _maze.hasShield) return;
+    if (_totalCoins < _shieldCost) return;
+    setState(() {
+      _totalCoins -= _shieldCost;
+      _maze.hasShield = true;
+    });
+    _saveTotalCoins();
+    _vibrate();
+  }
+
+  void _buyFreeze() {
+    if (_solving || _boosted) return;
+    if (_totalCoins < _freezeCost) return;
+    setState(() {
+      _totalCoins -= _freezeCost;
+      _boosted = true;
+      _boostTimer?.cancel();
+      _boostTimer = Timer(const Duration(seconds: 10), () {
+        if (mounted) setState(() => _boosted = false);
+      });
+    });
+    _saveTotalCoins();
+    _vibrate();
+  }
+
   Future<void> _caught() async {
+    if (_maze.hasShield) {
+      setState(() {
+        _maze.hasShield = false;
+        _maze.playerRow = 0;
+        _maze.playerCol = 0;
+        _maze.explore(0, 0);
+        _graceUntil = DateTime.now().add(const Duration(seconds: 2));
+      });
+      _revision.value++;
+      _vibrate();
+      return;
+    }
     _solving = true;
+    _catches++;
     if (_rewardedAd == null) _loadRewardedAd();
     final scheme = Theme.of(context).colorScheme;
     final retry = await showDialog<bool>(
@@ -1300,26 +2535,129 @@ class _MazeGameState extends State<MazeGame> {
   void _restartLevel() {
     setState(() {
       _solving = false;
-      _newMaze();
+      _newMaze(seed: _dailyMode ? _dailySeed : null);
     });
     _focusNode.requestFocus();
   }
 
-  void _levelComplete() {
+  void _toggleDaily() {
+    if (_infinityMode) return;
+    if (_dailyMode) {
+      _exitDaily();
+    } else {
+      _enterDaily();
+    }
+  }
+
+  void _enterDaily() {
+    final seed = _dailySeed;
+    setState(() {
+      _savedLevel = _level;
+      _dailyMode = true;
+      _dailyLevel = 1 + seed % 9;
+      _level = _dailyLevel;
+    });
+    _newMaze(seed: seed);
+    _focusNode.requestFocus();
+  }
+
+  void _exitDaily() {
+    setState(() {
+      _dailyMode = false;
+      _level =
+          _infinityMode ? _savedLevel : _savedLevel.clamp(1, _maxLevel);
+    });
+    _newMaze();
+    _focusNode.requestFocus();
+  }
+
+  int _parMoves() => _maze.solutionLength() * 2;
+
+  Future<void> _levelComplete() async {
     _solving = true;
+    final moves = _moves;
+    final par = _parMoves();
+    final noCatch = _catches == 0;
+    final allCoins = _coinCount == 0 || _coinsThisLevel >= _coinCount;
+    var stars = 1;
+    if (noCatch && moves <= par) stars = 2;
+    if (allCoins && noCatch && moves <= par) stars = 3;
+
+    final prefs = await SharedPreferences.getInstance();
+    final prevStars = _starsByLevel[_level] ?? 0;
+    if (stars > prevStars) {
+      _starsByLevel[_level] = stars;
+      await prefs.setInt('level${_level}_stars', stars);
+    }
+    final prevMoves = _bestMovesByLevel[_level] ?? 0;
+    if (prevMoves == 0 || moves < prevMoves) {
+      _bestMovesByLevel[_level] = moves;
+      await prefs.setInt('level${_level}_bestMoves', moves);
+    }
+
+    var bonus = 0;
+    if (_dailyMode && !_dailyDone) {
+      _dailyDone = true;
+      bonus = 50;
+      _totalCoins += bonus;
+      await prefs.setBool('dailyDone_$_todayKey', true);
+      await prefs.setInt('totalCoins', _totalCoins);
+    }
+
+    if (!mounted) return;
     final scheme = Theme.of(context).colorScheme;
-    showDialog<bool>(
+    final bestMoves = _bestMovesByLevel[_level] ?? moves;
+    final title = _dailyMode ? 'DAILY CLEAR!' : 'LEVEL CLEAR!';
+    final replay = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       barrierColor: scheme.surface,
       builder: (context) => AlertDialog(
         backgroundColor: scheme.surface,
         title: Text(
-          'LEVEL CLEAR!',
+          title,
           textAlign: TextAlign.center,
           style: TextStyle(
             color: scheme.onSurface,
             fontWeight: FontWeight.bold,
           ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _StarRow(count: stars, color: scheme.onSurface, size: 34),
+            const SizedBox(height: 12),
+            Text(
+              'Moves $moves  ·  Best $bestMoves',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: scheme.onSurface),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Coins $_coinsThisLevel / $_coinCount',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: scheme.onSurface),
+            ),
+            if (!noCatch) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Got caught this run — no bonus stars',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: scheme.onSurface),
+              ),
+            ],
+            if (_dailyMode && bonus > 0) ...[
+              const SizedBox(height: 4),
+              Text(
+                '+$bonus daily coins!',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: const Color(0xFFFFB300),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ],
         ),
         actions: [
           TextButton(
@@ -1332,7 +2670,7 @@ class _MazeGameState extends State<MazeGame> {
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: Text(
-              'Next Level',
+              _dailyMode ? 'Done' : 'Next Level',
               style: TextStyle(
                 color: scheme.onSurface,
                 fontWeight: FontWeight.bold,
@@ -1341,18 +2679,35 @@ class _MazeGameState extends State<MazeGame> {
           ),
         ],
       ),
-    ).then((replay) {
-      setState(() {
-        _solving = false;
-        if (replay != true) {
-          if (_level >= _maxLevel) _maxLevel++;
-          _level++;
-          _saveProgress();
-        }
+    );
+    if (!mounted) return;
+    setState(() {
+      _solving = false;
+      if (replay == true) {
+        _newMaze(seed: _dailyMode ? _dailySeed : null);
+      } else if (_dailyMode) {
+        _dailyMode = false;
+        _level = _savedLevel.clamp(1, _maxLevel);
         _newMaze();
-      });
-      _focusNode.requestFocus();
+      } else if (_infinityMode) {
+        _level++;
+        _saveInfinity();
+        _newMaze();
+      } else if (_level >= 25) {
+        _maxLevel = 25;
+        _infinityMode = true;
+        _level = 26;
+        _saveProgress();
+        _saveInfinity();
+        _newMaze();
+      } else {
+        if (_level >= _maxLevel) _maxLevel++;
+        _level++;
+        _saveProgress();
+        _newMaze();
+      }
     });
+    _focusNode.requestFocus();
   }
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
@@ -1397,8 +2752,15 @@ class _MazeGameState extends State<MazeGame> {
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        if (widget.onExit != null)
+                          IconButton(
+                            onPressed: widget.onExit,
+                            icon: Icon(Icons.home_outlined,
+                                color: scheme.onSurface),
+                            tooltip: 'Home',
+                          ),
                         IconButton(
-                          onPressed: _level > 1
+                          onPressed: !_dailyMode && !_infinityMode && _level > 1
                               ? () => _goToLevel(_level - 1)
                               : null,
                           icon: Icon(Icons.arrow_back, color: scheme.onSurface),
@@ -1406,7 +2768,11 @@ class _MazeGameState extends State<MazeGame> {
                           tooltip: 'Previous level',
                         ),
                         Text(
-                          'LEVEL $_level',
+                          _infinityMode
+                              ? '∞ $_level'
+                              : _dailyMode
+                                  ? 'DAILY $_level'
+                                  : 'LEVEL $_level',
                           style: TextStyle(
                             color: scheme.onSurface,
                             fontSize: 18,
@@ -1415,7 +2781,7 @@ class _MazeGameState extends State<MazeGame> {
                           ),
                         ),
                         IconButton(
-                          onPressed: _level < _maxLevel
+                          onPressed: !_dailyMode && !_infinityMode && _level < _maxLevel
                               ? () => _goToLevel(_level + 1)
                               : null,
                           icon: Icon(Icons.arrow_forward, color: scheme.onSurface),
@@ -1428,7 +2794,7 @@ class _MazeGameState extends State<MazeGame> {
                       child: FittedBox(
                         fit: BoxFit.scaleDown,
                         child: Text(
-                          'MOVAZE',
+              'MOVAZE',
                           style: TextStyle(
                             color: scheme.onSurface,
                             fontSize: 18,
@@ -1469,7 +2835,8 @@ class _MazeGameState extends State<MazeGame> {
                         ),
                         IconButton(
                           onPressed: () {
-                            setState(_newMaze);
+                            setState(() =>
+                                _newMaze(seed: _dailyMode ? _dailySeed : null));
                             _focusNode.requestFocus();
                           },
                           icon: Icon(Icons.refresh, color: scheme.onSurface),
@@ -1481,6 +2848,115 @@ class _MazeGameState extends State<MazeGame> {
                 ),
               ),
               Divider(color: scheme.onSurface, height: 12, thickness: 1),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    IconButton(
+                      onPressed: _infinityMode ? null : _toggleDaily,
+                      icon: Icon(
+                        _infinityMode
+                            ? Icons.all_inclusive
+                            : _dailyMode
+                                ? Icons.check_circle_outline
+                                : Icons.calendar_month,
+                        color: _infinityMode
+                            ? const Color(0xFFB39DDB)
+                            : _dailyMode
+                                ? const Color(0xFF26A69A)
+                                : scheme.onSurface,
+                      ),
+                      disabledColor: scheme.onSurface.withValues(alpha: 0.35),
+                      tooltip: _infinityMode
+                          ? 'Infinity mode'
+                          : _dailyMode
+                              ? 'Exit daily challenge'
+                              : 'Daily challenge',
+                    ),
+                    Text(
+                      _dailyMode
+                          ? (_dailyDone ? 'Done' : 'Challenge')
+                          : 'Daily',
+                      style: TextStyle(
+                        color: scheme.onSurface,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    _StarRow(
+                      count: _starsByLevel[_level] ?? 0,
+                      color: scheme.onSurface,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          if (_maze.hasFog)
+                            _IndicatorChip(
+                              icon: Icons.visibility_off,
+                              label: 'FOG',
+                              color: scheme.onSurface,
+                            ),
+                          if (_maze.boss != null)
+                            _IndicatorChip(
+                              icon: Icons.warning_amber_rounded,
+                              label: 'BOSS',
+                              color: const Color(0xFFE53935),
+                            ),
+                          if (_maze.keys.isNotEmpty)
+                            _IndicatorChip(
+                              icon: Icons.key,
+                              label: '${_maze.keysHeld}',
+                              color: const Color(0xFFFFB300),
+                            ),
+                          if (_maze.hasShield)
+                            _IndicatorChip(
+                              icon: Icons.shield,
+                              label: 'SAVER',
+                              color: const Color(0xFF26A69A),
+                            )
+                          else
+                            _BuyChip(
+                              icon: Icons.shield_outlined,
+                              cost: _shieldCost,
+                              enabled: _totalCoins >= _shieldCost,
+                              onTap: _buyShield,
+                            ),
+                          if (_boosted)
+                            _IndicatorChip(
+                              icon: Icons.ac_unit,
+                              label: 'FROZEN',
+                              color: const Color(0xFF26A69A),
+                            )
+                          else
+                            _BuyChip(
+                              icon: Icons.ac_unit,
+                              cost: _freezeCost,
+                              enabled: _totalCoins >= _freezeCost,
+                              onTap: _buyFreeze,
+                            ),
+                        ],
+                      ),
+                    ),
+                    const Spacer(),
+                    const Icon(Icons.monetization_on_outlined,
+                        color: Color(0xFFFFB300), size: 20),
+                    const SizedBox(width: 4),
+                    Text(
+                      '$_totalCoins',
+                      style: TextStyle(
+                        color: scheme.onSurface,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               Expanded(
                 child: Center(
                   child: AspectRatio(
@@ -1508,6 +2984,7 @@ class _MazeGameState extends State<MazeGame> {
                   onDown: () => _move(1, 0),
                   onLeft: () => _move(0, -1),
                   onRight: () => _move(0, 1),
+                  moves: _moves,
                 ),
               ),
             ],
@@ -1525,6 +3002,7 @@ class DPad extends StatelessWidget {
     required this.onDown,
     required this.onLeft,
     required this.onRight,
+    this.moves,
   });
 
   static const double padW = 80;
@@ -1535,6 +3013,7 @@ class DPad extends StatelessWidget {
   final VoidCallback onDown;
   final VoidCallback onLeft;
   final VoidCallback onRight;
+  final int? moves;
 
   Widget _button(ColorScheme scheme, IconData icon, VoidCallback onTap) {
     return GestureDetector(
@@ -1547,6 +3026,39 @@ class DPad extends StatelessWidget {
           border: Border.all(color: scheme.onSurface, width: 2),
         ),
         child: Icon(icon, color: scheme.onSurface, size: 30),
+      ),
+    );
+  }
+
+  Widget _moves(ColorScheme scheme) {
+    return Container(
+      width: padW,
+      height: padH,
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        border: Border.all(color: scheme.onSurface, width: 2),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            'MOVES',
+            style: TextStyle(
+              color: scheme.onSurface,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1,
+            ),
+          ),
+          Text(
+            '$moves',
+            style: TextStyle(
+              color: scheme.onSurface,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1564,7 +3076,7 @@ class DPad extends StatelessWidget {
           children: [
             _button(scheme, Icons.arrow_back, onLeft),
             SizedBox(width: gap),
-            SizedBox(width: padW, height: padH),
+            moves == null ? SizedBox(width: padW, height: padH) : _moves(scheme),
             SizedBox(width: gap),
             _button(scheme, Icons.arrow_forward, onRight),
           ],
@@ -1572,6 +3084,119 @@ class DPad extends StatelessWidget {
         SizedBox(height: gap),
         _button(scheme, Icons.arrow_downward, onDown),
       ],
+    );
+  }
+}
+
+class _StarRow extends StatelessWidget {
+  const _StarRow({required this.count, required this.color, this.size = 22});
+
+  final int count;
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(3, (i) {
+        final filled = i < count;
+        return Icon(
+          filled ? Icons.star : Icons.star_border,
+          color: filled
+              ? const Color(0xFFFFB300)
+              : color.withValues(alpha: 0.3),
+          size: size,
+        );
+      }),
+    );
+  }
+}
+
+class _IndicatorChip extends StatelessWidget {
+  const _IndicatorChip({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 14),
+          const SizedBox(width: 3),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BuyChip extends StatelessWidget {
+  const _BuyChip({
+    required this.icon,
+    required this.cost,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final int cost;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final dim = enabled ? 1.0 : 0.35;
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: scheme.onSurface.withValues(alpha: 0.4),
+          ),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: scheme.onSurface.withValues(alpha: dim), size: 14),
+            const SizedBox(width: 3),
+            const Icon(Icons.monetization_on_outlined,
+                color: Color(0xFFFFB300), size: 12),
+            const SizedBox(width: 1),
+            Text(
+              '$cost',
+              style: TextStyle(
+                color: scheme.onSurface.withValues(alpha: dim),
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
