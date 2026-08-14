@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:vibration/vibration.dart';
 
 void main() {
@@ -326,6 +327,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         iconSize: 18,
                         padding: EdgeInsets.zero,
                         visualDensity: VisualDensity.compact,
+                        constraints: const BoxConstraints(),
                         icon: const Icon(Icons.admin_panel_settings,
                             color: Color(0xFFB39DDB), size: 18),
                         tooltip: 'Unlock all levels (test)',
@@ -447,13 +449,26 @@ class _WorldCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text(
-                'WORLD $world',
-                style: TextStyle(
-                  color: scheme.onSurface,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1,
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'WORLD $world',
+                    style: TextStyle(
+                      color: scheme.onSurface,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                  Text(
+                    worldName(world),
+                    style: TextStyle(
+                      color: scheme.onSurface.withValues(alpha: 0.6),
+                      fontSize: 11,
+                      letterSpacing: 3,
+                    ),
+                  ),
+                ],
               ),
               const Spacer(),
               const Icon(Icons.star, color: Color(0xFFFFB300), size: 16),
@@ -677,6 +692,10 @@ class Enemy {
 }
 
 class Maze {
+  /// The boss abandons its patrol and hunts the player whenever the player is
+  /// within this many cells (Manhattan distance).
+  static const int bossChaseRadius = 4;
+
   final int size;
   final List<List<MazeCell>> cells;
   final Set<(int, int)> coins = {};
@@ -687,6 +706,9 @@ class Maze {
   (int, int)? shieldSpot;
   int keysHeld = 0;
   bool hasShield = false;
+  bool fogRemoved = false;
+  bool keysRemoved = false;
+  bool bossRemoved = false;
   Enemy? boss;
   int playerRow = 0;
   int playerCol = 0;
@@ -698,10 +720,10 @@ class Maze {
   final bool _fogEnabled;
   final bool _bossEnabled;
 
-  bool get hasKeys => _keysEnabled;
+  bool get hasKeys => _keysEnabled && !keysRemoved;
   bool get shieldEnabled => _shieldEnabled;
-  bool get hasFog => _fogEnabled;
-  bool get hasBoss => _bossEnabled;
+  bool get hasFog => _fogEnabled && !fogRemoved;
+  bool get hasBoss => _bossEnabled && !bossRemoved;
 
   Maze(
     this.size, {
@@ -720,9 +742,10 @@ class Maze {
        _bossEnabled = boss {
     _rng = Random(seed);
     _generateWithRetry(enemyCount);
-    for (var attempt = 0; attempt < 20; attempt++) {
+    for (var attempt = 0; attempt < 60; attempt++) {
       _buildPatrolRoute();
-      if (enemyCount <= 0 || _hideIndices().length >= enemyCount) break;
+      if (enemyCount <= 0) break;
+      if (_hideIndices().length >= enemyCount && _routeHasLeafBeside()) break;
     }
     if (enemyCount > 0) _placeEnemies(enemyCount);
     if (_bossEnabled) _placeBoss();
@@ -772,6 +795,35 @@ class Maze {
       if (_hasDeadEndBeside(r, c, onRoute)) hide.add(i);
     }
     return hide;
+  }
+
+  /// True when at least one route cell sits directly beside a true dead-end
+  /// leaf (open on only one side), so the player always has a dead-end hiding
+  /// spot to duck into right on an enemy's path.
+  bool _routeHasLeafBeside() {
+    final onRoute = {for (final p in patrolRoute) p};
+    bool isLeaf(int nr, int nc) {
+      if (nr < size ~/ 2) return false;
+      if (nr == size - 1 && nc == size - 1) return false;
+      if (onRoute.contains((nr, nc))) return false;
+      final n = cells[nr][nc];
+      var open = 0;
+      if (!n.top) open++;
+      if (!n.bottom) open++;
+      if (!n.left) open++;
+      if (!n.right) open++;
+      return open == 1;
+    }
+
+    for (var i = 0; i < patrolRoute.length; i++) {
+      final (r, c) = patrolRoute[i];
+      final cell = cells[r][c];
+      if (r > size ~/ 2 && !cell.top && isLeaf(r - 1, c)) return true;
+      if (r < size - 1 && !cell.bottom && isLeaf(r + 1, c)) return true;
+      if (c > 0 && !cell.left && isLeaf(r, c - 1)) return true;
+      if (c < size - 1 && !cell.right && isLeaf(r, c + 1)) return true;
+    }
+    return false;
   }
 
   /// True when the bottom half has enough dead-end hiding spots for every
@@ -1813,8 +1865,12 @@ class Maze {
   /// of all riding one side. If an enemy's next cell is occupied, it bounces
   /// back within its own arc so it never leaves it or overlaps a teammate.
   /// Off-route dead ends stay safe hiding spots.
+  /// The boss patrols the same way, but while the player is within
+  /// [bossChaseRadius] cells it abandons the route and hunts the player down.
   void advanceEnemy(Enemy e, {required Random rng}) {
     if (rng.nextDouble() >= e.pace) return;
+    if (e.isBoss && _chasePlayer(e)) return;
+    if (e.isBoss) _snapToRoute(e);
     if (e.startIndex == e.endIndex) return;
     var next = e.patrolIndex + e.dir;
     if (next < e.startIndex || next > e.endIndex) {
@@ -1837,23 +1893,73 @@ class Maze {
     e.row = target.$1;
     e.col = target.$2;
   }
+
+  /// If the boss is within chase range of the player, move it one BFS step
+  /// toward the player and report that the move was a chase.
+  bool _chasePlayer(Enemy e) {
+    if (e.row == playerRow && e.col == playerCol) return false;
+    final dist = (e.row - playerRow).abs() + (e.col - playerCol).abs();
+    if (dist > bossChaseRadius) return false;
+    final step = nextStepToward(e.row, e.col, playerRow, playerCol);
+    if (step == null) return false;
+    e.row = step.$1;
+    e.col = step.$2;
+    return true;
+  }
+
+  /// After a chase the boss may sit off the route; bring it back to the
+  /// nearest free route cell so patrolling resumes without a long teleport.
+  void _snapToRoute(Enemy e) {
+    final cur = patrolRoute[e.patrolIndex];
+    if (e.row == cur.$1 && e.col == cur.$2) return;
+    var best = -1;
+    var bestDist = 1 << 30;
+    for (var i = e.startIndex; i <= e.endIndex; i++) {
+      final p = patrolRoute[i];
+      if (_enemyAtCell(p.$1, p.$2) != null) continue;
+      final d = (p.$1 - e.row).abs() + (p.$2 - e.col).abs();
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    }
+    if (best < 0) return;
+    e.patrolIndex = best;
+    e.row = patrolRoute[best].$1;
+    e.col = patrolRoute[best].$2;
+  }
 }
 
 class MazePainter extends CustomPainter {
   final Maze maze;
   final Color fg;
   final Color bg;
+  final double zoom;
 
   MazePainter({
     required this.maze,
     required this.fg,
     required this.bg,
+    this.zoom = 1.0,
     required ValueNotifier<int> repaint,
   }) : super(repaint: repaint);
 
   @override
   void paint(Canvas canvas, Size size) {
-    final cell = size.width / maze.size;
+    final baseCell = size.width / maze.size;
+    if (zoom > 1.001) {
+      // Show a window around the player, clamped to the maze bounds.
+      final window = size.width / (baseCell * zoom);
+      final half = window / 2;
+      final pr = maze.playerRow + 0.5;
+      final pc = maze.playerCol + 0.5;
+      final centerR = pr.clamp(half, maze.size - half);
+      final centerC = pc.clamp(half, maze.size - half);
+      canvas.translate(
+          -(centerC - half) * baseCell * zoom, -(centerR - half) * baseCell * zoom);
+      canvas.scale(zoom, zoom);
+    }
+    final cell = baseCell;
     final fog = maze.hasFog;
     bool visible(int r, int c) => !fog || maze.explored.contains((r, c));
     final wall = Paint()
@@ -1929,7 +2035,11 @@ class MazePainter extends CustomPainter {
     );
 
     final enemyPaint = Paint()..color = fg;
-    for (final e in maze.enemies) {
+    final drawables = [
+      ...maze.enemies,
+      if (maze.boss != null && !maze.boss!.isBoss) maze.boss!,
+    ];
+    for (final e in drawables) {
       if (!visible(e.row, e.col)) continue;
       canvas.drawCircle(
         Offset(e.col * cell + cell * 0.5, e.row * cell + cell * 0.5),
@@ -1939,9 +2049,29 @@ class MazePainter extends CustomPainter {
     }
 
     final boss = maze.boss;
-    if (boss != null && visible(boss.row, boss.col)) {
+    if (boss != null && boss.isBoss && visible(boss.row, boss.col)) {
       final bcx = boss.col * cell + cell * 0.5;
       final bcy = boss.row * cell + cell * 0.5;
+      final radius = Maze.bossChaseRadius * cell;
+      final chasePath = Path()
+        ..moveTo(bcx, bcy - radius)
+        ..lineTo(bcx + radius, bcy)
+        ..lineTo(bcx, bcy + radius)
+        ..lineTo(bcx - radius, bcy)
+        ..close();
+      canvas.drawPath(
+        chasePath,
+        Paint()
+          ..color = const Color(0xFFE53935).withValues(alpha: 0.12)
+          ..style = PaintingStyle.fill,
+      );
+      canvas.drawPath(
+        chasePath,
+        Paint()
+          ..color = const Color(0xFFE53935).withValues(alpha: 0.6)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = max(1.0, cell * 0.04),
+      );
       canvas.drawCircle(
         Offset(bcx, bcy),
         cell * 0.4,
@@ -2065,6 +2195,7 @@ class MazePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant MazePainter oldDelegate) =>
+      oldDelegate.zoom != zoom ||
       oldDelegate.fg != fg ||
       oldDelegate.bg != bg ||
       !identical(oldDelegate.maze, maze);
@@ -2102,18 +2233,38 @@ int infinityEnemyCountForLevel(int level) => min(1 + (level - 1) ~/ 2, 10);
 
 int infinityDoorCountForLevel(int level) => min(2 + (level - 1) ~/ 5, 3);
 
-int enemyCountForLevel(int level) =>
-    level % 5 == 0 ? max(1, level ~/ 2) : level;
+/// Each world has its own mechanic: 1=pure maze, 2=enemies,
+/// 3=keys/doors, 4=fog, 5=boss world (fewer patrols, boss every level).
+int enemyCountForLevel(int level) {
+  final world = worldForLevel(level);
+  if (world == 1) return 0;
+  if (world >= 5) return max(1, level ~/ 2);
+  return level;
+}
 
-int doorCountForLevel(int level) => level < 5 ? 0 : (level >= 10 ? 3 : 2);
+int doorCountForLevel(int level) {
+  final world = worldForLevel(level);
+  if (world < 3) return 0;
+  if (world < 4) return 2;
+  return 3;
+}
 
-bool hasKeysForLevel(int level) => level >= 5;
+bool hasKeysForLevel(int level) => worldForLevel(level) >= 3;
 
-bool hasFogForLevel(int level) => level >= 10;
+bool hasFogForLevel(int level) => worldForLevel(level) >= 4;
 
-bool hasBossForLevel(int level) => level % 5 == 0;
+bool hasBossForLevel(int level) => worldForLevel(level) >= 5;
 
 bool hasShieldForLevel(int level) => true;
+
+/// Display name of a world, matching its signature mechanic.
+String worldName(int world) => switch (world) {
+      1 => 'MEADOW',
+      2 => 'HUNTED',
+      3 => 'LOCKED',
+      4 => 'FOGGY',
+      _ => 'BOSSLAND',
+    };
 
 /// Number of stars a [level] sits inside, 1-based (level 5 is world 1).
 int worldForLevel(int level) => (level - 1) ~/ 5 + 1;
@@ -2142,11 +2293,15 @@ class _MazeGameState extends State<MazeGame> {
   bool _dailyMode = false;
   bool _infinityMode = false;
   bool _dailyDone = false;
+  double _zoom = 1.0;
   int _dailyLevel = 1;
   int _savedLevel = 1;
   DateTime _graceUntil = DateTime.fromMillisecondsSinceEpoch(0);
   static const int _shieldCost = 10;
   static const int _freezeCost = 5;
+  static const int _fogCost = 15;
+  static const int _keysCost = 12;
+  static const int _bossCost = 25;
   Timer? _enemyTimer;
   Timer? _boostTimer;
   RewardedAd? _rewardedAd;
@@ -2216,7 +2371,6 @@ class _MazeGameState extends State<MazeGame> {
   Future<void> _loadProgress() async {
     final prefs = await SharedPreferences.getInstance();
     final savedMax = prefs.getInt('maxLevel');
-    final saved = prefs.getInt('level');
     final savedInfinity = prefs.getInt('infinityLevel') ?? widget.initialLevel;
     final totalCoins = prefs.getInt('totalCoins') ?? 0;
     final dailyDone = prefs.getBool('dailyDone_$_todayKey') ?? false;
@@ -2226,11 +2380,7 @@ class _MazeGameState extends State<MazeGame> {
       if (_infinityMode) {
         _level = savedInfinity;
       } else if (!_dailyMode) {
-        if (saved != null) {
-          _level = saved.clamp(1, _maxLevel);
-        } else {
-          _level = widget.initialLevel.clamp(1, _maxLevel);
-        }
+        _level = widget.initialLevel.clamp(1, _maxLevel);
       }
       _totalCoins = totalCoins;
       _dailyDone = dailyDone;
@@ -2331,11 +2481,21 @@ class _MazeGameState extends State<MazeGame> {
     _catches = 0;
     _moves = 0;
     _boosted = false;
+    _zoom = _defaultZoom();
     _boostTimer?.cancel();
     _graceUntil = DateTime.fromMillisecondsSinceEpoch(0);
     _revision.value++;
     _startEnemyTimer();
   }
+
+  double _defaultZoom() {
+    final cellPx = 340 / _maze.size;
+    return (14 / cellPx).clamp(1.0, 3.0);
+  }
+
+  void _zoomIn() => setState(() => _zoom = (_zoom * 1.25).clamp(1.0, 4.0));
+
+  void _zoomOut() => setState(() => _zoom = (_zoom / 1.25).clamp(1.0, 4.0));
 
   void _loadRewardedAd() {
     if (_rewardedAdLoading || _rewardedAd != null) return;
@@ -2451,7 +2611,45 @@ class _MazeGameState extends State<MazeGame> {
     _vibrate();
   }
 
-  Future<void> _caught() async {
+  void _buyRemoveFog() {
+    if (_solving || !_maze.hasFog) return;
+    if (_totalCoins < _fogCost) return;
+    setState(() {
+      _totalCoins -= _fogCost;
+      _maze.fogRemoved = true;
+      _maze.explore(_maze.playerRow, _maze.playerCol);
+    });
+    _saveTotalCoins();
+    _vibrate();
+  }
+
+  void _buyRemoveKeys() {
+    if (_solving || _maze.keys.isEmpty) return;
+    if (_totalCoins < _keysCost) return;
+    setState(() {
+      _totalCoins -= _keysCost;
+      _maze.keysRemoved = true;
+      _maze.doors.clear();
+      _maze.keys.clear();
+      _maze.keysHeld = 0;
+    });
+    _saveTotalCoins();
+    _vibrate();
+  }
+
+  void _buyRemoveBoss() {
+    final boss = _maze.boss;
+    if (_solving || boss == null || !boss.isBoss) return;
+    if (_totalCoins < _bossCost) return;
+    setState(() {
+      _totalCoins -= _bossCost;
+      boss.isBoss = false;
+      boss.pace = 0.7;
+      _maze.bossRemoved = true;
+    });
+    _saveTotalCoins();
+    _vibrate();
+  }
     if (_maze.hasShield) {
       setState(() {
         _maze.hasShield = false;
@@ -2734,7 +2932,6 @@ class _MazeGameState extends State<MazeGame> {
 
   @override
   Widget build(BuildContext context) {
-    final mazeSize = _maze.size;
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       body: SafeArea(
@@ -2749,15 +2946,22 @@ class _MazeGameState extends State<MazeGame> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
                         if (widget.onExit != null)
                           IconButton(
                             onPressed: widget.onExit,
                             icon: Icon(Icons.home_outlined,
                                 color: scheme.onSurface),
                             tooltip: 'Home',
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
                           ),
                         IconButton(
                           onPressed: !_dailyMode && !_infinityMode && _level > 1
@@ -2766,6 +2970,9 @@ class _MazeGameState extends State<MazeGame> {
                           icon: Icon(Icons.arrow_back, color: scheme.onSurface),
                           disabledColor: scheme.onSurface.withValues(alpha: 0.35),
                           tooltip: 'Previous level',
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
                         ),
                         Text(
                           _infinityMode
@@ -2787,20 +2994,11 @@ class _MazeGameState extends State<MazeGame> {
                           icon: Icon(Icons.arrow_forward, color: scheme.onSurface),
                           disabledColor: scheme.onSurface.withValues(alpha: 0.35),
                           tooltip: 'Next level',
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
                         ),
-                      ],
-                    ),
-                    Flexible(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-              'MOVAZE',
-                          style: TextStyle(
-                            color: scheme.onSurface,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 3,
-                          ),
+                          ],
                         ),
                       ),
                     ),
@@ -2816,6 +3014,9 @@ class _MazeGameState extends State<MazeGame> {
                             color: scheme.onSurface,
                           ),
                           tooltip: widget.isDark ? 'Light mode' : 'Dark mode',
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
                         ),
                         IconButton(
                           onPressed: () => setState(
@@ -2832,6 +3033,9 @@ class _MazeGameState extends State<MazeGame> {
                           tooltip: _vibrationEnabled
                               ? 'Vibration off'
                               : 'Vibration on',
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
                         ),
                         IconButton(
                           onPressed: () {
@@ -2841,6 +3045,9 @@ class _MazeGameState extends State<MazeGame> {
                           },
                           icon: Icon(Icons.refresh, color: scheme.onSurface),
                           tooltip: 'New maze',
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
                         ),
                       ],
                     ),
@@ -2872,6 +3079,9 @@ class _MazeGameState extends State<MazeGame> {
                           : _dailyMode
                               ? 'Exit daily challenge'
                               : 'Daily challenge',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
                     ),
                     Text(
                       _dailyMode
@@ -2889,60 +3099,6 @@ class _MazeGameState extends State<MazeGame> {
                       color: scheme.onSurface,
                       size: 18,
                     ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          if (_maze.hasFog)
-                            _IndicatorChip(
-                              icon: Icons.visibility_off,
-                              label: 'FOG',
-                              color: scheme.onSurface,
-                            ),
-                          if (_maze.boss != null)
-                            _IndicatorChip(
-                              icon: Icons.warning_amber_rounded,
-                              label: 'BOSS',
-                              color: const Color(0xFFE53935),
-                            ),
-                          if (_maze.keys.isNotEmpty)
-                            _IndicatorChip(
-                              icon: Icons.key,
-                              label: '${_maze.keysHeld}',
-                              color: const Color(0xFFFFB300),
-                            ),
-                          if (_maze.hasShield)
-                            _IndicatorChip(
-                              icon: Icons.shield,
-                              label: 'SAVER',
-                              color: const Color(0xFF26A69A),
-                            )
-                          else
-                            _BuyChip(
-                              icon: Icons.shield_outlined,
-                              cost: _shieldCost,
-                              enabled: _totalCoins >= _shieldCost,
-                              onTap: _buyShield,
-                            ),
-                          if (_boosted)
-                            _IndicatorChip(
-                              icon: Icons.ac_unit,
-                              label: 'FROZEN',
-                              color: const Color(0xFF26A69A),
-                            )
-                          else
-                            _BuyChip(
-                              icon: Icons.ac_unit,
-                              cost: _freezeCost,
-                              enabled: _totalCoins >= _freezeCost,
-                              onTap: _buyFreeze,
-                            ),
-                        ],
-                      ),
-                    ),
                     const Spacer(),
                     const Icon(Icons.monetization_on_outlined,
                         color: Color(0xFFFFB300), size: 20),
@@ -2957,22 +3113,121 @@ class _MazeGameState extends State<MazeGame> {
                   ],
                 ),
               ),
+              SizedBox(
+                width: double.infinity,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_maze.hasFog) ...[
+                          const SizedBox(width: 6),
+                          _BuyChip(
+                            icon: Icons.visibility_off,
+                            label: 'FOG',
+                            cost: _fogCost,
+                            enabled: _totalCoins >= _fogCost,
+                            onTap: _buyRemoveFog,
+                          ),
+                        ],
+                        if (_maze.boss != null && _maze.boss!.isBoss) ...[
+                          const SizedBox(width: 6),
+                          _BuyChip(
+                            icon: Icons.warning_amber_rounded,
+                            label: 'BOSS',
+                            cost: _bossCost,
+                            enabled: _totalCoins >= _bossCost,
+                            onTap: _buyRemoveBoss,
+                          ),
+                        ],
+                        if (_maze.keys.isNotEmpty) ...[
+                          const SizedBox(width: 6),
+                          _BuyChip(
+                            icon: Icons.key,
+                            label: '${_maze.keysHeld}',
+                            cost: _keysCost,
+                            enabled: _totalCoins >= _keysCost,
+                            onTap: _buyRemoveKeys,
+                          ),
+                        ],
+                        if (_maze.hasShield) ...[
+                          const SizedBox(width: 6),
+                          _IndicatorChip(
+                            icon: Icons.shield,
+                            label: 'SAVER',
+                            color: const Color(0xFF26A69A),
+                          ),
+                        ] else ...[
+                          const SizedBox(width: 6),
+                          _BuyChip(
+                            icon: Icons.shield_outlined,
+                            cost: _shieldCost,
+                            enabled: _totalCoins >= _shieldCost,
+                            onTap: _buyShield,
+                          ),
+                        ],
+                        if (_boosted) ...[
+                          const SizedBox(width: 6),
+                          _IndicatorChip(
+                            icon: Icons.ac_unit,
+                            label: 'FROZEN',
+                            color: const Color(0xFF26A69A),
+                          ),
+                        ] else ...[
+                          const SizedBox(width: 6),
+                          _BuyChip(
+                            icon: Icons.ac_unit,
+                            cost: _freezeCost,
+                            enabled: _totalCoins >= _freezeCost,
+                            onTap: _buyFreeze,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
               Expanded(
                 child: Center(
-                  child: AspectRatio(
-                    aspectRatio: 1,
-                    child: Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: CustomPaint(
-                        painter: MazePainter(
-                          maze: _maze,
-                          fg: scheme.onSurface,
-                          bg: scheme.surface,
-                          repaint: _revision,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      AspectRatio(
+                        aspectRatio: 1,
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: ClipRect(
+                            child: CustomPaint(
+                              painter: MazePainter(
+                                maze: _maze,
+                                fg: scheme.onSurface,
+                                bg: scheme.surface,
+                                zoom: _zoom,
+                                repaint: _revision,
+                              ),
+                            ),
+                          ),
                         ),
-                        size: Size.square(mazeSize.toDouble()),
                       ),
-                    ),
+                      const SizedBox(width: 4),
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _ZoomButton(
+                            icon: Icons.add,
+                            onTap: _zoomIn,
+                          ),
+                          _ZoomButton(
+                            icon: Icons.remove,
+                            onTap: _zoomOut,
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -2991,6 +3246,25 @@ class _MazeGameState extends State<MazeGame> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ZoomButton extends StatelessWidget {
+  const _ZoomButton({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return IconButton(
+      onPressed: onTap,
+      iconSize: 20,
+      visualDensity: VisualDensity.compact,
+      icon: Icon(icon, color: scheme.onSurface),
+      tooltip: icon == Icons.add ? 'Zoom in' : 'Zoom out',
     );
   }
 }
@@ -3157,9 +3431,11 @@ class _BuyChip extends StatelessWidget {
     required this.cost,
     required this.enabled,
     required this.onTap,
+    this.label,
   });
 
   final IconData icon;
+  final String? label;
   final int cost;
   final bool enabled;
   final VoidCallback onTap;
@@ -3182,6 +3458,17 @@ class _BuyChip extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, color: scheme.onSurface.withValues(alpha: dim), size: 14),
+            if (label != null) ...[
+              const SizedBox(width: 3),
+              Text(
+                label!,
+                style: TextStyle(
+                  color: scheme.onSurface.withValues(alpha: dim),
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
             const SizedBox(width: 3),
             const Icon(Icons.monetization_on_outlined,
                 color: Color(0xFFFFB300), size: 12),

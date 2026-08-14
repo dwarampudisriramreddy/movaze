@@ -76,28 +76,34 @@ int bfsDistance(Maze m, int sr, int sc, int tr, int tc) {
 
 void main() {
   group('level gating', () {
-    test('feature thresholds match the spec', () {
-      expect(hasKeysForLevel(4), isFalse);
-      expect(hasKeysForLevel(5), isTrue);
-      expect(hasKeysForLevel(9), isTrue);
+    test('feature thresholds match the world spec', () {
+      // World 1 (1-5) pure mazes, world 2 (6-10) enemies: no keys yet.
+      expect(hasKeysForLevel(10), isFalse);
+      // World 3 (11-15) introduces keys + locked doors.
+      expect(hasKeysForLevel(11), isTrue);
+      expect(hasKeysForLevel(16), isTrue);
 
-      expect(hasFogForLevel(9), isFalse);
-      expect(hasFogForLevel(10), isTrue);
+      // World 4 (16-20) introduces fog.
+      expect(hasFogForLevel(15), isFalse);
+      expect(hasFogForLevel(16), isTrue);
 
-      expect(hasBossForLevel(4), isFalse);
-      expect(hasBossForLevel(5), isTrue);
-      expect(hasBossForLevel(9), isFalse);
-      expect(hasBossForLevel(10), isTrue);
+      // World 5 (21-25) is the boss world.
+      expect(hasBossForLevel(20), isFalse);
+      expect(hasBossForLevel(21), isTrue);
+      expect(hasBossForLevel(25), isTrue);
 
       expect(hasShieldForLevel(1), isTrue);
 
-      expect(doorCountForLevel(4), 0);
-      expect(doorCountForLevel(5), 2);
-      expect(doorCountForLevel(10), 3);
+      expect(doorCountForLevel(10), 0);
+      expect(doorCountForLevel(11), 2);
+      expect(doorCountForLevel(16), 3);
 
-      expect(enemyCountForLevel(4), 4);
-      expect(enemyCountForLevel(5), lessThan(5));
-      expect(enemyCountForLevel(10), lessThan(10));
+      // World 1 has no enemies; worlds 2-4 scale with level; world 5 is
+      // boss-heavy so patrols are halved.
+      expect(enemyCountForLevel(1), 0);
+      expect(enemyCountForLevel(5), 0);
+      expect(enemyCountForLevel(10), 10);
+      expect(enemyCountForLevel(21), lessThan(21));
 
       expect(mazeSizeForLevel(1), 7);
       expect(worldForLevel(5), 1);
@@ -106,8 +112,8 @@ void main() {
       expect(worldEnd(2), 10);
     });
 
-    test('every level builds a valid maze with its features', () {
-      for (var level = 1; level <= 15; level++) {
+    test('every level builds a valid maze with its world features', () {
+      for (var level = 1; level <= 25; level++) {
         final maze = Maze(
           mazeSizeForLevel(level),
           enemyCount: enemyCountForLevel(level),
@@ -247,7 +253,7 @@ void main() {
 
   group('keys in dead ends', () {
     test('every key sits in a dead-end cell', () {
-      for (var level = 5; level <= 10; level++) {
+      for (var level = 11; level <= 16; level++) {
         for (var rep = 0; rep < 20; rep++) {
           final maze = Maze(
             mazeSizeForLevel(level),
@@ -276,46 +282,91 @@ void main() {
   });
 
   group('boss', () {
-    test('boss is a fast patroller that never chases or leaves the route', () {
+    test('boss patrols the route when the player is out of chase range', () {
       for (var trial = 0; trial < 6; trial++) {
         final maze = Maze(15, enemyCount: 2, boss: true);
         final boss = maze.boss!;
         expect(boss.isBoss, isTrue);
-        expect(boss.startIndex, 0);
-        expect(boss.endIndex, maze.patrolRoute.length - 1);
-        expect(maze.patrolRoute[boss.patrolIndex], (boss.row, boss.col));
+        expect(boss.pace, 1.0, reason: 'boss should move every tick');
 
         final onRoute = {for (final p in maze.patrolRoute) p};
-        var moved = false;
-        for (var step = 0; step < 40; step++) {
-          final before = (boss.row, boss.col);
+        // Player stays at the start; the boss may only leave the route while
+        // the player is within chase range.
+        maze.playerRow = 0;
+        maze.playerCol = 0;
+        for (var step = 0; step < 100; step++) {
           maze.advanceEnemy(boss, rng: Random(step));
-          if ((boss.row, boss.col) != before) moved = true;
-          expect(onRoute.contains((boss.row, boss.col)), isTrue,
-              reason: 'boss left the patrol route');
-          expect(
-            boss.patrolIndex,
-            inInclusiveRange(0, maze.patrolRoute.length - 1),
-          );
+          final dist =
+              (boss.row - maze.playerRow).abs() + (boss.col - maze.playerCol).abs();
+          if (dist > Maze.bossChaseRadius) {
+            expect(onRoute.contains((boss.row, boss.col)), isTrue,
+                reason: 'boss must patrol when out of range (dist $dist)');
+          }
         }
-        expect(moved, isTrue, reason: 'boss should move fast along its path');
       }
     });
 
-    test('boss stays on the route even with the player close by', () {
-      for (var trial = 0; trial < 6; trial++) {
-        final maze = Maze(15, enemyCount: 2, boss: true);
-        final boss = maze.boss!;
-        // Park the player on the boss so the old chase AI would have run.
-        maze.playerRow = boss.row;
-        maze.playerCol = boss.col;
-        final onRoute = {for (final p in maze.patrolRoute) p};
-        for (var step = 0; step < 30; step++) {
-          maze.advanceEnemy(boss, rng: Random(step));
-          expect(onRoute.contains((boss.row, boss.col)), isTrue,
-              reason: 'boss must patrol, never chase');
+    test('boss abandons its route to chase a nearby player into a hiding spot',
+        () {
+      Maze? maze;
+      for (var attempt = 0; attempt < 30 && maze == null; attempt++) {
+        final m = Maze(15, enemyCount: 2, boss: true);
+        final onRoute = {for (final p in m.patrolRoute) p};
+        int open(int r, int c) {
+          final cell = m.cells[r][c];
+          var o = 0;
+          if (!cell.top) o++;
+          if (!cell.bottom) o++;
+          if (!cell.left) o++;
+          if (!cell.right) o++;
+          return o;
+        }
+
+        outer:
+        for (var i = 0; i < m.patrolRoute.length; i++) {
+          final (r, c) = m.patrolRoute[i];
+          for (final nb in [(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)]) {
+            if (nb.$1 < 0 || nb.$1 >= m.size || nb.$2 < 0 || nb.$2 >= m.size) {
+              continue;
+            }
+            if (onRoute.contains(nb)) continue;
+            if (open(nb.$1, nb.$2) != 1) continue;
+            final cell = m.cells[r][c];
+            final openToNb = (nb == (r - 1, c) && !cell.top) ||
+                (nb == (r + 1, c) && !cell.bottom) ||
+                (nb == (r, c - 1) && !cell.left) ||
+                (nb == (r, c + 1) && !cell.right);
+            if (!openToNb) continue;
+            final boss = m.boss!;
+            boss.row = r;
+            boss.col = c;
+            boss.patrolIndex = i;
+            m.playerRow = nb.$1;
+            m.playerCol = nb.$2;
+            maze = m;
+            break outer;
+          }
         }
       }
+
+      expect(maze, isNotNull,
+          reason: 'no off-route dead end found next to the patrol route');
+      final m = maze!;
+      final boss = m.boss!;
+      final onRoute = {for (final p in m.patrolRoute) p};
+      expect(onRoute.contains((boss.row, boss.col)), isTrue);
+      expect(onRoute.contains((m.playerRow, m.playerCol)), isFalse);
+
+      var caught = false;
+      for (var step = 0; step < 30; step++) {
+        m.advanceEnemy(boss, rng: Random(step));
+        if (boss.row == m.playerRow && boss.col == m.playerCol) {
+          caught = true;
+          break;
+        }
+      }
+      expect(caught, isTrue,
+          reason: 'boss should chase the player into the dead end');
     });
   });
 
