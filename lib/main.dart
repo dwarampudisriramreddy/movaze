@@ -164,6 +164,8 @@ class _SplashScreenState extends State<SplashScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            const _GameLogo(size: 120),
+            const SizedBox(height: 20),
             Text(
               'MOVAZE',
               style: TextStyle(
@@ -228,6 +230,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int _maxLevel = 1;
   int _totalCoins = 0;
   int _infinityLevel = 1;
+  bool _cleared25 = false;
   final Map<int, int> _stars = {};
 
   @override
@@ -241,6 +244,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final maxLevel = prefs.getInt('maxLevel') ?? 1;
     final coins = prefs.getInt('totalCoins') ?? 0;
     final infinityLevel = prefs.getInt('infinityLevel') ?? 1;
+    final cleared25 = prefs.getBool('cleared25') ?? false;
     final stars = <int, int>{};
     for (var i = 1; i <= maxLevel; i++) {
       stars[i] = prefs.getInt('level${i}_stars') ?? 0;
@@ -250,6 +254,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _maxLevel = maxLevel;
       _totalCoins = coins;
       _infinityLevel = infinityLevel;
+      _cleared25 = cleared25;
       _stars..clear()..addAll(stars);
     });
   }
@@ -258,8 +263,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('maxLevel', 25);
     await prefs.setInt('level', 25);
+    await prefs.setBool('cleared25', true);
     if (!mounted) return;
-    setState(() => _maxLevel = 25);
+    setState(() {
+      _maxLevel = 25;
+      _cleared25 = true;
+    });
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -285,14 +294,21 @@ class _HomeScreenState extends State<HomeScreen> {
                   Flexible(
                     child: FittedBox(
                       fit: BoxFit.scaleDown,
-                      child: Text(
-                        'MOVAZE',
-                        style: TextStyle(
-                          color: scheme.onSurface,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 6,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const _GameLogo(size: 28),
+                          const SizedBox(width: 8),
+                          Text(
+                            'MOVAZE',
+                            style: TextStyle(
+                              color: scheme.onSurface,
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 6,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -392,7 +408,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         onPlay: widget.onPlayLevel,
                       )
                     : _InfinityCard(
-                        maxLevel: _maxLevel,
+                        cleared25: _cleared25,
                         infinityLevel: _infinityLevel,
                         onPlay: _launchInfinity,
                       ),
@@ -554,21 +570,19 @@ class _LevelTile extends StatelessWidget {
 
 class _InfinityCard extends StatelessWidget {
   const _InfinityCard({
-    required this.maxLevel,
+    required this.cleared25,
     required this.infinityLevel,
     required this.onPlay,
   });
 
-  static const int unlockAt = 25;
-
-  final int maxLevel;
+  final bool cleared25;
   final int infinityLevel;
   final VoidCallback onPlay;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final unlocked = maxLevel >= unlockAt;
+    final unlocked = cleared25;
     final bg =
         unlocked ? scheme.tertiaryContainer : scheme.surfaceContainerHighest;
     final fg =
@@ -2650,6 +2664,8 @@ class _MazeGameState extends State<MazeGame> {
     _saveTotalCoins();
     _vibrate();
   }
+
+  Future<void> _caught() async {
     if (_maze.hasShield) {
       setState(() {
         _maze.hasShield = false;
@@ -2771,6 +2787,21 @@ class _MazeGameState extends State<MazeGame> {
 
   int _parMoves() => _maze.solutionLength() * 2;
 
+  Future<void> _shareResult(int moves, int stars) async {
+    final mode = _dailyMode
+        ? 'Daily challenge'
+        : _infinityMode
+            ? 'Infinity world'
+            : 'Level $_level';
+    final text = 'I cleared MOVAZE $mode in $moves moves '
+        '($stars/3 stars, $_coinsThisLevel coins collected)! '
+        'Can you beat it?';
+    await SharePlus.instance.share(ShareParams(
+      text: text,
+      subject: 'MOVAZE $mode',
+    ));
+  }
+
   Future<void> _levelComplete() async {
     _solving = true;
     final moves = _moves;
@@ -2791,6 +2822,9 @@ class _MazeGameState extends State<MazeGame> {
     if (prevMoves == 0 || moves < prevMoves) {
       _bestMovesByLevel[_level] = moves;
       await prefs.setInt('level${_level}_bestMoves', moves);
+    }
+    if (!_dailyMode && !_infinityMode && _level >= 25) {
+      await prefs.setBool('cleared25', true);
     }
 
     var bonus = 0;
@@ -2864,6 +2898,14 @@ class _MazeGameState extends State<MazeGame> {
               'Replay',
               style: TextStyle(color: scheme.onSurface),
             ),
+          ),
+          IconButton(
+            onPressed: () => _shareResult(moves, stars),
+            icon: Icon(Icons.share, color: scheme.onSurface),
+            tooltip: 'Share on Instagram',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -3248,6 +3290,19 @@ class _MazeGameState extends State<MazeGame> {
       ),
     );
   }
+}
+
+class _GameLogo extends StatelessWidget {
+  const _GameLogo({this.size = 96});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Image.asset(
+        'assets/icon/logo.png',
+        width: size,
+        height: size,
+      );
 }
 
 class _ZoomButton extends StatelessWidget {
