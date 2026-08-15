@@ -2221,7 +2221,7 @@ int infinityDoorCountForLevel(int level) => min(2 + (level - 1) ~/ 5, 3);
 /// 3=keys/doors, 4=fog, 5=boss world (fewer patrols, boss every level).
 int enemyCountForLevel(int level) {
   final world = worldForLevel(level);
-  if (world == 1) return 0;
+  if (world == 1) return level >= 3 ? 1 : 0;
   if (world >= 5) return max(1, level ~/ 2);
   return level;
 }
