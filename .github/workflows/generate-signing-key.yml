@@ -1,0 +1,64 @@
+name: Generate Android Signing Key
+
+# Run this ONCE manually (Actions -> Generate Android Signing Key -> Run).
+# It generates a fresh upload keystore + PEM and commits them to the repo.
+# The normal build workflow then reuses this same keystore forever.
+# WARNING: Running it again replaces the upload key. If you already uploaded
+# a release to Play Console, do NOT re-run this or future uploads will be
+# rejected. Keep the repo private; this file is your upload key.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Generate upload keystore
+        run: |
+          rm -f android/app/upload-keystore.jks
+          keytool -genkeypair -v \
+            -keystore android/app/upload-keystore.jks \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -alias upload \
+            -storepass android \
+            -keypass android \
+            -dname "CN=Movaze, OU=Android, O=Movaze, L=India, ST=AP, C=IN"
+
+      - name: Export upload certificate (for Play Console)
+        run: |
+          keytool -export -rfc \
+            -keystore android/app/upload-keystore.jks \
+            -alias upload \
+            -storepass android \
+            -file android/app/upload_certificate.pem
+
+      - name: Commit signing files to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add android/app/upload-keystore.jks android/app/upload_certificate.pem
+          git commit -m "Update Android upload signing key" || echo "No changes to commit"
+          git push
+
+      - name: Upload signing artifacts (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-signing-key
+          path: |
+            android/app/upload-keystore.jks
+            android/app/upload_certificate.pem
