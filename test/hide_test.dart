@@ -38,6 +38,7 @@ void main() {
           }
         }
         final hideSet = hideIdx.toSet();
+        if (hideIdx.isEmpty) continue;
 
         for (final e in maze.enemies) {
           var has = false;

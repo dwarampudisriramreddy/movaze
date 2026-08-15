@@ -17,6 +17,8 @@ void main() {
           for (var step = 0; step < 3000; step++) {
             for (var i = 0; i < count; i++) {
               final e = maze.enemies[i];
+              // Single-cell arcs never move (matches Maze.advanceEnemy).
+              if (e.startIndex == e.endIndex) continue;
               var next = e.patrolIndex + e.dir;
               if (next < e.startIndex || next > e.endIndex) {
                 next = e.patrolIndex - e.dir;

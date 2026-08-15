@@ -24,7 +24,7 @@ void main() {
     await pumpHome(tester);
 
     expect(find.text('MOVAZE'), findsOneWidget);
-    expect(find.text('DAILY CHALLENGE'), findsOneWidget);
+    expect(find.text('CHALLENGES'), findsOneWidget);
     expect(find.text('PLAY'), findsOneWidget);
     expect(find.text('WORLD 1'), findsOneWidget);
     expect(find.byType(MazeGame), findsNothing);
@@ -121,7 +121,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('∞ 1'), findsOneWidget);
+    expect(find.text('∞ 26'), findsOneWidget);
     expect(find.text('FOG'), findsOneWidget);
     expect(find.text('BOSS'), findsOneWidget);
     expect(find.byIcon(Icons.shield_outlined), findsWidgets);
@@ -161,8 +161,8 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('DAILY CHALLENGE'), findsOneWidget);
-    expect(find.text('DAILY 3'), findsOneWidget);
+    expect(find.text('CHALLENGES'), findsOneWidget);
+    expect(find.text('CHALLENGES 2'), findsOneWidget);
   });
 
   MazePainter mazePainter(WidgetTester tester) {

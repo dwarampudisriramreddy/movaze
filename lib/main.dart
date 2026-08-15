@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:vibration/vibration.dart';
 
 void main() {
@@ -111,6 +110,7 @@ class _MovazeAppState extends State<MovazeApp> {
                   onExit: _exitGame,
                   initialLevel: _game!.level,
                   dailyMode: _game!.daily,
+                  infinityMode: _game!.infinity,
                 ),
     );
   }
@@ -229,7 +229,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _maxLevel = 1;
   int _totalCoins = 0;
-  int _infinityLevel = 1;
+  int _infinityLevel = 26;
   bool _cleared25 = false;
   final Map<int, int> _stars = {};
 
@@ -243,7 +243,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     final maxLevel = prefs.getInt('maxLevel') ?? 1;
     final coins = prefs.getInt('totalCoins') ?? 0;
-    final infinityLevel = prefs.getInt('infinityLevel') ?? 1;
+    final infinityLevel = max(prefs.getInt('infinityLevel') ?? 26, 26);
     final cleared25 = prefs.getBool('cleared25') ?? false;
     final stars = <int, int>{};
     for (var i = 1; i <= maxLevel; i++) {
@@ -257,26 +257,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _cleared25 = cleared25;
       _stars..clear()..addAll(stars);
     });
-  }
-
-  Future<void> _unlockAll() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('maxLevel', 25);
-    await prefs.setInt('level', 25);
-    await prefs.setBool('cleared25', true);
-    if (!mounted) return;
-    setState(() {
-      _maxLevel = 25;
-      _cleared25 = true;
-    });
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text('All levels unlocked (test mode)'),
-          duration: Duration(seconds: 2),
-        ),
-      );
   }
 
   @override
@@ -338,16 +318,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         tooltip: widget.isDark ? 'Light mode' : 'Dark mode',
                       ),
-                      IconButton(
-                        onPressed: _unlockAll,
-                        iconSize: 18,
-                        padding: EdgeInsets.zero,
-                        visualDensity: VisualDensity.compact,
-                        constraints: const BoxConstraints(),
-                        icon: const Icon(Icons.admin_panel_settings,
-                            color: Color(0xFFB39DDB), size: 18),
-                        tooltip: 'Unlock all levels (test)',
-                      ),
                     ],
                   ),
                 ],
@@ -367,7 +337,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       onPressed: widget.onPlayDaily,
                       child: const Text(
-                        'DAILY CHALLENGE',
+                        'CHALLENGES',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           letterSpacing: 1,
@@ -754,7 +724,7 @@ class Maze {
        _shieldEnabled = shield,
        _fogEnabled = fog,
        _bossEnabled = boss {
-    _rng = Random(seed);
+       _rng = Random(seed);
     _generateWithRetry(enemyCount);
     for (var attempt = 0; attempt < 60; attempt++) {
       _buildPatrolRoute();
@@ -1053,7 +1023,7 @@ class Maze {
     }
 
     if (_shieldEnabled) shieldSpot = takeDeadEnd() ?? takeAny(coinCount);
-    boostSpot = takeDeadEnd() ?? takeAny(coinCount);
+    if (enemyCount > 0) boostSpot = takeDeadEnd() ?? takeAny(coinCount);
   }
 
   /// Consumes any pickup at [r],[c], reporting what was collected.
@@ -2123,7 +2093,7 @@ class MazePainter extends CustomPainter {
       );
     }
 
-    final keyColor = const Color(0xFFFFB300);
+    final keyColor = const Color(0xFF795548);
     final keyStroke = Paint()
       ..color = keyColor
       ..style = PaintingStyle.stroke
@@ -2143,14 +2113,14 @@ class MazePainter extends CustomPainter {
     }
 
     final lockedPaint = Paint()
-      ..color = const Color(0xFFFB8C00)
-      ..strokeWidth = max(2.0, cell * 0.22)
+      ..color = const Color(0xFF795548)
+      ..strokeWidth = max(3.5, cell * 0.38)
       ..strokeCap = StrokeCap.round;
     // Once the player holds a key the doors read as open (a thin, faded line)
     // so collecting a key visibly unlocks them.
     final openPaint = Paint()
-      ..color = const Color(0xFFFB8C00).withValues(alpha: 0.35)
-      ..strokeWidth = max(1.0, cell * 0.05)
+      ..color = const Color(0xFF795548).withValues(alpha: 0.5)
+      ..strokeWidth = max(1.5, cell * 0.08)
       ..strokeCap = StrokeCap.round;
     final doorPaint = maze.keysHeld > 0 ? openPaint : lockedPaint;
     for (final d in maze.doors) {
@@ -2241,7 +2211,7 @@ class MazeGame extends StatefulWidget {
 
 int mazeSizeForLevel(int level) => 2 * level + 5;
 
-int infinitySizeForLevel(int level) => min(23, 11 + 2 * ((level - 1) ~/ 2));
+int infinitySizeForLevel(int level) => 2 * level + 5;
 
 int infinityEnemyCountForLevel(int level) => min(1 + (level - 1) ~/ 2, 10);
 
@@ -2311,6 +2281,10 @@ class _MazeGameState extends State<MazeGame> {
   int _dailyLevel = 1;
   int _savedLevel = 1;
   DateTime _graceUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _dailyDeadline = DateTime.fromMillisecondsSinceEpoch(0);
+  int _dailySecondsLeft = 300;
+  Timer? _dailyTimer;
+  static const int _dailyTimeSeconds = 300;
   static const int _shieldCost = 10;
   static const int _freezeCost = 5;
   static const int _fogCost = 15;
@@ -2335,7 +2309,7 @@ class _MazeGameState extends State<MazeGame> {
     _level = widget.initialLevel;
     _maxLevel = max(widget.initialLevel, 1);
     if (_dailyMode) {
-      _dailyLevel = 1 + (widget.dailySeed ?? _dailySeed) % 9;
+      _dailyLevel = 1 + (widget.dailySeed ?? _dailySeed) % 25;
       _level = _dailyLevel;
     }
     _maze = _infinityMode
@@ -2358,6 +2332,7 @@ class _MazeGameState extends State<MazeGame> {
   void dispose() {
     _enemyTimer?.cancel();
     _boostTimer?.cancel();
+    _dailyTimer?.cancel();
     _rewardedAd?.dispose();
     _revision.dispose();
     _focusNode.dispose();
@@ -2385,7 +2360,7 @@ class _MazeGameState extends State<MazeGame> {
   Future<void> _loadProgress() async {
     final prefs = await SharedPreferences.getInstance();
     final savedMax = prefs.getInt('maxLevel');
-    final savedInfinity = prefs.getInt('infinityLevel') ?? widget.initialLevel;
+    final savedInfinity = max(prefs.getInt('infinityLevel') ?? 26, 26);
     final totalCoins = prefs.getInt('totalCoins') ?? 0;
     final dailyDone = prefs.getBool('dailyDone_$_todayKey') ?? false;
     if (!mounted) return;
@@ -2404,6 +2379,7 @@ class _MazeGameState extends State<MazeGame> {
       _bestMovesByLevel[i] = prefs.getInt('level${i}_bestMoves') ?? 0;
     }
     _newMaze();
+    if (_dailyMode) _startDailyCountdown();
     if (_dailyMode || _infinityMode) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _showModeHint());
     }
@@ -2412,7 +2388,7 @@ class _MazeGameState extends State<MazeGame> {
   void _showModeHint() {
     if (!mounted) return;
     final scheme = Theme.of(context).colorScheme;
-    final title = _dailyMode ? 'DAILY CHALLENGE' : 'INFINITY WORLD';
+    final title = _dailyMode ? 'CHALLENGES' : 'INFINITY WORLD';
     final body = _dailyMode
         ? 'Find the exit before the timer runs out and earn bonus coins.'
         : 'Every world combined into one endless maze. Reach the exit, level after level.';
@@ -2451,7 +2427,7 @@ class _MazeGameState extends State<MazeGame> {
 
   Future<void> _saveInfinity() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('infinityLevel', _level);
+    await prefs.setInt('infinityLevel', max(_level, 26));
   }
 
   Future<void> _saveTotalCoins() async {
@@ -2460,7 +2436,14 @@ class _MazeGameState extends State<MazeGame> {
   }
 
   void _goToLevel(int level) {
-    if (_dailyMode || _infinityMode) return;
+    if (_dailyMode) return;
+    if (_infinityMode) {
+      if (level < 26 || level == _level) return;
+      setState(() => _level = level);
+      _saveInfinity();
+      _newMaze();
+      return;
+    }
     if (level < 1 || level > _maxLevel || level == _level) return;
     setState(() => _level = level);
     _saveProgress();
@@ -2498,6 +2481,11 @@ class _MazeGameState extends State<MazeGame> {
     _zoom = _defaultZoom();
     _boostTimer?.cancel();
     _graceUntil = DateTime.fromMillisecondsSinceEpoch(0);
+    if (_dailyMode && !_dailyDone) {
+      _dailyDeadline =
+          DateTime.now().add(const Duration(seconds: _dailyTimeSeconds));
+      _dailySecondsLeft = _dailyTimeSeconds;
+    }
     _revision.value++;
     _startEnemyTimer();
   }
@@ -2611,7 +2599,7 @@ class _MazeGameState extends State<MazeGame> {
   }
 
   void _buyFreeze() {
-    if (_solving || _boosted) return;
+    if (_solving || _boosted || worldForLevel(_level) < 2) return;
     if (_totalCoins < _freezeCost) return;
     setState(() {
       _totalCoins -= _freezeCost;
@@ -2763,19 +2751,92 @@ class _MazeGameState extends State<MazeGame> {
     }
   }
 
+  String _formatCountdown(int seconds) {
+    final m = (seconds ~/ 60).toString().padLeft(2, '0');
+    final s = (seconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
   void _enterDaily() {
     final seed = _dailySeed;
     setState(() {
       _savedLevel = _level;
       _dailyMode = true;
-      _dailyLevel = 1 + seed % 9;
+      _dailyLevel = 1 + seed % 25;
       _level = _dailyLevel;
     });
+    _startDailyCountdown();
     _newMaze(seed: seed);
     _focusNode.requestFocus();
   }
 
+  void _startDailyCountdown() {
+    _dailyTimer?.cancel();
+    if (!_dailyMode || _dailyDone) return;
+    _dailyDeadline = DateTime.now().add(
+      const Duration(seconds: _dailyTimeSeconds),
+    );
+    setState(() => _dailySecondsLeft = _dailyTimeSeconds);
+    _dailyTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      final left = _dailyDeadline.difference(DateTime.now()).inSeconds;
+      if (left <= 0) {
+        _dailyTimer?.cancel();
+        _dailyTimeout();
+        return;
+      }
+      setState(() => _dailySecondsLeft = left);
+    });
+  }
+
+  Future<void> _dailyTimeout() async {
+    _dailyTimer?.cancel();
+    _solving = true;
+    final scheme = Theme.of(context).colorScheme;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: scheme.surface,
+      builder: (context) => AlertDialog(
+        backgroundColor: scheme.surface,
+        title: Text(
+          'TIME IS UP!',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Text(
+          'You ran out of time in the challenges.\nBonus coins were not earned.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: scheme.onSurface),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'OK',
+              style: TextStyle(
+                color: scheme.onSurface,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      _solving = false;
+      _dailyMode = false;
+      _level = _savedLevel.clamp(1, _maxLevel);
+      _newMaze();
+    });
+  }
+
   void _exitDaily() {
+    _dailyTimer?.cancel();
     setState(() {
       _dailyMode = false;
       _level =
@@ -2786,21 +2847,6 @@ class _MazeGameState extends State<MazeGame> {
   }
 
   int _parMoves() => _maze.solutionLength() * 2;
-
-  Future<void> _shareResult(int moves, int stars) async {
-    final mode = _dailyMode
-        ? 'Daily challenge'
-        : _infinityMode
-            ? 'Infinity world'
-            : 'Level $_level';
-    final text = 'I cleared MOVAZE $mode in $moves moves '
-        '($stars/3 stars, $_coinsThisLevel coins collected)! '
-        'Can you beat it?';
-    await SharePlus.instance.share(ShareParams(
-      text: text,
-      subject: 'MOVAZE $mode',
-    ));
-  }
 
   Future<void> _levelComplete() async {
     _solving = true;
@@ -2830,6 +2876,7 @@ class _MazeGameState extends State<MazeGame> {
     var bonus = 0;
     if (_dailyMode && !_dailyDone) {
       _dailyDone = true;
+      _dailyTimer?.cancel();
       bonus = 50;
       _totalCoins += bonus;
       await prefs.setBool('dailyDone_$_todayKey', true);
@@ -2839,7 +2886,7 @@ class _MazeGameState extends State<MazeGame> {
     if (!mounted) return;
     final scheme = Theme.of(context).colorScheme;
     final bestMoves = _bestMovesByLevel[_level] ?? moves;
-    final title = _dailyMode ? 'DAILY CLEAR!' : 'LEVEL CLEAR!';
+    final title = _dailyMode ? 'CHALLENGES CLEAR!' : 'LEVEL CLEAR!';
     final replay = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -2898,14 +2945,6 @@ class _MazeGameState extends State<MazeGame> {
               'Replay',
               style: TextStyle(color: scheme.onSurface),
             ),
-          ),
-          IconButton(
-            onPressed: () => _shareResult(moves, stars),
-            icon: Icon(Icons.share, color: scheme.onSurface),
-            tooltip: 'Share on Instagram',
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -3006,9 +3045,15 @@ class _MazeGameState extends State<MazeGame> {
                             constraints: const BoxConstraints(),
                           ),
                         IconButton(
-                          onPressed: !_dailyMode && !_infinityMode && _level > 1
-                              ? () => _goToLevel(_level - 1)
-                              : null,
+                          onPressed: _dailyMode
+                              ? null
+                              : _infinityMode
+                                  ? (_level > 26
+                                      ? () => _goToLevel(_level - 1)
+                                      : null)
+                                  : (_level > 1
+                                      ? () => _goToLevel(_level - 1)
+                                      : null),
                           icon: Icon(Icons.arrow_back, color: scheme.onSurface),
                           disabledColor: scheme.onSurface.withValues(alpha: 0.35),
                           tooltip: 'Previous level',
@@ -3020,7 +3065,7 @@ class _MazeGameState extends State<MazeGame> {
                           _infinityMode
                               ? '∞ $_level'
                               : _dailyMode
-                                  ? 'DAILY $_level'
+                                  ? 'CHALLENGES $_level'
                                   : 'LEVEL $_level',
                           style: TextStyle(
                             color: scheme.onSurface,
@@ -3029,17 +3074,16 @@ class _MazeGameState extends State<MazeGame> {
                             letterSpacing: 2,
                           ),
                         ),
-                        IconButton(
-                          onPressed: !_dailyMode && !_infinityMode && _level < _maxLevel
-                              ? () => _goToLevel(_level + 1)
-                              : null,
-                          icon: Icon(Icons.arrow_forward, color: scheme.onSurface),
-                          disabledColor: scheme.onSurface.withValues(alpha: 0.35),
-                          tooltip: 'Next level',
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                        ),
+                        if (!_dailyMode && !_infinityMode && _level < _maxLevel)
+                          IconButton(
+                            onPressed: () => _goToLevel(_level + 1),
+                            icon: Icon(Icons.arrow_forward,
+                                color: scheme.onSurface),
+                            tooltip: 'Next level',
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
                           ],
                         ),
                       ),
@@ -3101,40 +3145,42 @@ class _MazeGameState extends State<MazeGame> {
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Row(
                   children: [
-                    IconButton(
-                      onPressed: _infinityMode ? null : _toggleDaily,
-                      icon: Icon(
-                        _infinityMode
-                            ? Icons.all_inclusive
-                            : _dailyMode
-                                ? Icons.check_circle_outline
-                                : Icons.calendar_month,
-                        color: _infinityMode
-                            ? const Color(0xFFB39DDB)
-                            : _dailyMode
-                                ? const Color(0xFF26A69A)
-                                : scheme.onSurface,
+                    if (_dailyMode) ...[
+                      IconButton(
+                        onPressed: _toggleDaily,
+                        icon: Icon(Icons.check_circle_outline,
+                            color: const Color(0xFF26A69A)),
+                        tooltip: 'Exit challenges',
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
                       ),
-                      disabledColor: scheme.onSurface.withValues(alpha: 0.35),
-                      tooltip: _infinityMode
-                          ? 'Infinity mode'
-                          : _dailyMode
-                              ? 'Exit daily challenge'
-                              : 'Daily challenge',
-                      visualDensity: VisualDensity.compact,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-                    Text(
-                      _dailyMode
-                          ? (_dailyDone ? 'Done' : 'Challenge')
-                          : 'Daily',
-                      style: TextStyle(
-                        color: scheme.onSurface,
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
+                      Text(
+                        _dailyDone ? 'Done' : 'Challenge',
+                        style: TextStyle(
+                          color: scheme.onSurface,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
+                    ],
+                    if (_dailyMode && !_dailyDone) ...[
+                      const SizedBox(width: 8),
+                      Icon(Icons.timer_outlined,
+                          color: scheme.onSurface, size: 16),
+                      const SizedBox(width: 2),
+                      Text(
+                        _formatCountdown(_dailySecondsLeft),
+                        style: TextStyle(
+                          color: _dailySecondsLeft <= 30
+                              ? const Color(0xFFE53935)
+                              : scheme.onSurface,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ],
                     const SizedBox(width: 10),
                     _StarRow(
                       count: _starsByLevel[_level] ?? 0,
@@ -3211,21 +3257,23 @@ class _MazeGameState extends State<MazeGame> {
                             onTap: _buyShield,
                           ),
                         ],
-                        if (_boosted) ...[
-                          const SizedBox(width: 6),
-                          _IndicatorChip(
-                            icon: Icons.ac_unit,
-                            label: 'FROZEN',
-                            color: const Color(0xFF26A69A),
-                          ),
-                        ] else ...[
-                          const SizedBox(width: 6),
-                          _BuyChip(
-                            icon: Icons.ac_unit,
-                            cost: _freezeCost,
-                            enabled: _totalCoins >= _freezeCost,
-                            onTap: _buyFreeze,
-                          ),
+                        if (worldForLevel(_level) >= 2) ...[
+                          if (_boosted) ...[
+                            const SizedBox(width: 6),
+                            _IndicatorChip(
+                              icon: Icons.ac_unit,
+                              label: 'FROZEN',
+                              color: const Color(0xFF26A69A),
+                            ),
+                          ] else ...[
+                            const SizedBox(width: 6),
+                            _BuyChip(
+                              icon: Icons.ac_unit,
+                              cost: _freezeCost,
+                              enabled: _totalCoins >= _freezeCost,
+                              onTap: _buyFreeze,
+                            ),
+                          ],
                         ],
                       ],
                     ),
