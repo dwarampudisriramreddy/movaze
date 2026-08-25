@@ -98,10 +98,12 @@ void main() {
       expect(doorCountForLevel(11), 2);
       expect(doorCountForLevel(16), 3);
 
-      // World 1 has no enemies; worlds 2-4 scale with level; world 5 is
-      // boss-heavy so patrols are halved.
+      // World 1 has enemies starting at level 2; worlds 2-4 scale with level;
+      // world 5 is boss-heavy so patrols are halved.
       expect(enemyCountForLevel(1), 0);
-      expect(enemyCountForLevel(5), 0);
+      expect(enemyCountForLevel(2), 1);
+      expect(enemyCountForLevel(4), 2);
+      expect(enemyCountForLevel(5), 3);
       expect(enemyCountForLevel(10), 10);
       expect(enemyCountForLevel(21), lessThan(21));
 

@@ -1762,6 +1762,36 @@ class Maze {
     return options[rng.nextInt(options.length)];
   }
 
+  List<(int, int)> solutionPathCells() => _solutionPath();
+
+  List<(int, int)> hideSpotCells() {
+    final onRoute = {for (final p in patrolRoute) p};
+    final spots = <(int, int)>[];
+    for (var i = 0; i < patrolRoute.length; i++) {
+      final (r, c) = patrolRoute[i];
+      final cell = cells[r][c];
+      // Check each neighbour for a dead-end leaf (hide spot).
+      void check(int nr, int nc) {
+        if (nr < 0 || nr >= size || nc < 0 || nc >= size) return;
+        if (onRoute.contains((nr, nc))) return;
+        if (nr == size - 1 && nc == size - 1) return;
+        final n = cells[nr][nc];
+        var open = 0;
+        if (!n.top) open++;
+        if (!n.bottom) open++;
+        if (!n.left) open++;
+        if (!n.right) open++;
+        if (open == 1) spots.add((nr, nc));
+      }
+
+      if (!cell.top) check(r - 1, c);
+      if (!cell.bottom) check(r + 1, c);
+      if (!cell.left) check(r, c - 1);
+      if (!cell.right) check(r, c + 1);
+    }
+    return spots;
+  }
+
   bool isGoal() =>
       playerRow == size - 1 && playerCol == size - 1;
 
@@ -1919,6 +1949,8 @@ class MazePainter extends CustomPainter {
   final Color fg;
   final Color bg;
   final double zoom;
+  final List<(int, int)>? guidedPath;
+  final Set<(int, int)>? hideSpots;
 
   MazePainter({
     required this.maze,
@@ -1926,6 +1958,8 @@ class MazePainter extends CustomPainter {
     required this.bg,
     this.zoom = 1.0,
     required ValueNotifier<int> repaint,
+    this.guidedPath,
+    this.hideSpots,
   }) : super(repaint: repaint);
 
   @override
@@ -1982,6 +2016,59 @@ class MazePainter extends CustomPainter {
         if (m.right && c == maze.size - 1 && visible(r, c)) {
           canvas.drawLine(Offset(x + cell, y), Offset(x + cell, y + cell), wall);
         }
+      }
+    }
+
+    // Guided path (level 1 tutorial): draw dotted solution path
+    if (guidedPath != null && guidedPath!.length > 1) {
+      final pathPaint = Paint()
+        ..color = fg.withValues(alpha: 0.25)
+        ..strokeWidth = max(1.0, cell * 0.10)
+        ..strokeCap = StrokeCap.round;
+      for (var i = 0; i < guidedPath!.length - 1; i++) {
+        final (r1, c1) = guidedPath![i];
+        final (r2, c2) = guidedPath![i + 1];
+        canvas.drawLine(
+          Offset(c1 * cell + cell * 0.5, r1 * cell + cell * 0.5),
+          Offset(c2 * cell + cell * 0.5, r2 * cell + cell * 0.5),
+          pathPaint,
+        );
+      }
+      // Draw small arrow dots along the path
+      final dotPaint = Paint()
+        ..color = fg.withValues(alpha: 0.35)
+        ..style = PaintingStyle.fill;
+      for (var i = 0; i < guidedPath!.length; i += 2) {
+        final (r, c) = guidedPath![i];
+        canvas.drawCircle(
+          Offset(c * cell + cell * 0.5, r * cell + cell * 0.5),
+          cell * 0.08,
+          dotPaint,
+        );
+      }
+    }
+
+    // Hide spots (level 2 tutorial): highlight dead-end hiding spots
+    if (hideSpots != null && hideSpots!.isNotEmpty) {
+      final hidePaint = Paint()
+        ..color = const Color(0xFF26A69A).withValues(alpha: 0.20)
+        ..style = PaintingStyle.fill;
+      final hideBorder = Paint()
+        ..color = const Color(0xFF26A69A).withValues(alpha: 0.5)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = max(1.0, cell * 0.06);
+      for (final (r, c) in hideSpots!) {
+        final rect = Rect.fromLTWH(
+          c * cell + cell * 0.12,
+          r * cell + cell * 0.12,
+          cell * 0.76,
+          cell * 0.76,
+        );
+        canvas.drawRect(rect, hidePaint);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(rect, Radius.circular(cell * 0.12)),
+          hideBorder,
+        );
       }
     }
 
@@ -2182,6 +2269,8 @@ class MazePainter extends CustomPainter {
       oldDelegate.zoom != zoom ||
       oldDelegate.fg != fg ||
       oldDelegate.bg != bg ||
+      oldDelegate.guidedPath != guidedPath ||
+      oldDelegate.hideSpots != hideSpots ||
       !identical(oldDelegate.maze, maze);
 }
 
@@ -2221,7 +2310,14 @@ int infinityDoorCountForLevel(int level) => min(2 + (level - 1) ~/ 5, 3);
 /// 3=keys/doors, 4=fog, 5=boss world (fewer patrols, boss every level).
 int enemyCountForLevel(int level) {
   final world = worldForLevel(level);
-  if (world == 1) return level >= 3 ? 1 : 0;
+  if (world == 1) {
+    if (level == 1) return 0;
+    if (level == 2) return 1;
+    if (level == 3) return 1;
+    if (level == 4) return 2;
+    if (level == 5) return 3;
+    return 0;
+  }
   if (world >= 5) return max(1, level ~/ 2);
   return level;
 }
@@ -2296,6 +2392,8 @@ class _MazeGameState extends State<MazeGame> {
   bool _rewardedAdLoading = false;
   final Map<int, int> _starsByLevel = {};
   final Map<int, int> _bestMovesByLevel = {};
+  bool _showGuidedPath = false;
+  bool _showHideSpots = false;
 
   final ValueNotifier<int> _revision = ValueNotifier<int>(0);
 
@@ -2419,6 +2517,36 @@ class _MazeGameState extends State<MazeGame> {
     );
   }
 
+  void _showTutorial(String title, String body) {
+    if (!mounted) return;
+    final scheme = Theme.of(context).colorScheme;
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: scheme.surface,
+        title: Text(
+          title,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Text(
+          body,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: scheme.onSurface),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('OK', style: TextStyle(color: scheme.onSurface)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _saveProgress() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('level', _level);
@@ -2481,6 +2609,8 @@ class _MazeGameState extends State<MazeGame> {
     _zoom = _defaultZoom();
     _boostTimer?.cancel();
     _graceUntil = DateTime.fromMillisecondsSinceEpoch(0);
+    _showGuidedPath = _level == 1;
+    _showHideSpots = _level == 2;
     if (_dailyMode && !_dailyDone) {
       _dailyDeadline =
           DateTime.now().add(const Duration(seconds: _dailyTimeSeconds));
@@ -2488,6 +2618,13 @@ class _MazeGameState extends State<MazeGame> {
     }
     _revision.value++;
     _startEnemyTimer();
+    if (!_dailyMode && !_infinityMode) {
+      if (_level == 1) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _showTutorial('WELCOME!', 'Follow the path to reach the goal.'));
+      } else if (_level == 2) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _showTutorial('WATCH OUT!', 'An enemy patrols the maze. Hide in the green spots to escape.'));
+      }
+    }
   }
 
   double _defaultZoom() {
@@ -2535,6 +2672,8 @@ class _MazeGameState extends State<MazeGame> {
     setState(() {
       _revision.value++;
       _moves++;
+      if (_showGuidedPath && _moves >= 3) _showGuidedPath = false;
+      if (_showHideSpots && _moves >= 5) _showHideSpots = false;
       final pickup = _maze.takePickup(_maze.playerRow, _maze.playerCol);
       if (pickup.coin) {
         _coinsThisLevel++;
@@ -2707,7 +2846,7 @@ class _MazeGameState extends State<MazeGame> {
       _restartLevel();
       return;
     }
-    await _showAdThenRetry();
+    _restartLevel();
   }
 
   Future<void> _showAdThenRetry() async {
@@ -3298,6 +3437,8 @@ class _MazeGameState extends State<MazeGame> {
                                 bg: scheme.surface,
                                 zoom: _zoom,
                                 repaint: _revision,
+                                guidedPath: _showGuidedPath ? _maze.solutionPathCells() : null,
+                                hideSpots: _showHideSpots ? _maze.hideSpotCells().toSet() : null,
                               ),
                             ),
                           ),
@@ -3322,6 +3463,23 @@ class _MazeGameState extends State<MazeGame> {
                 ),
               ),
               Divider(color: scheme.onSurface, height: 12, thickness: 1),
+              if (_showGuidedPath || _showHideSpots)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  child: Text(
+                    _showGuidedPath
+                        ? 'Follow the path to the goal'
+                        : 'Duck into green spots to hide from the enemy',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: const Color(0xFF26A69A),
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.only(bottom: 24),
                 child: DPad(
