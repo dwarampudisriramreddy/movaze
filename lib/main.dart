@@ -2108,7 +2108,7 @@ class MazePainter extends CustomPainter {
     final enemyPaint = Paint()..color = fg;
     final drawables = [
       ...maze.enemies,
-      if (maze.boss != null && !maze.boss!.isBoss) maze.boss!,
+      if (maze.boss != null) maze.boss!,
     ];
     for (final e in drawables) {
       if (!visible(e.row, e.col)) continue;
@@ -2116,57 +2116,6 @@ class MazePainter extends CustomPainter {
         Offset(e.col * cell + cell * 0.5, e.row * cell + cell * 0.5),
         cell * 0.32,
         enemyPaint,
-      );
-    }
-
-    final boss = maze.boss;
-    if (boss != null && boss.isBoss && visible(boss.row, boss.col)) {
-      final bcx = boss.col * cell + cell * 0.5;
-      final bcy = boss.row * cell + cell * 0.5;
-      final radius = Maze.bossChaseRadius * cell;
-      final chasePath = Path()
-        ..moveTo(bcx, bcy - radius)
-        ..lineTo(bcx + radius, bcy)
-        ..lineTo(bcx, bcy + radius)
-        ..lineTo(bcx - radius, bcy)
-        ..close();
-      canvas.drawPath(
-        chasePath,
-        Paint()
-          ..color = const Color(0xFFE53935).withValues(alpha: 0.12)
-          ..style = PaintingStyle.fill,
-      );
-      canvas.drawPath(
-        chasePath,
-        Paint()
-          ..color = const Color(0xFFE53935).withValues(alpha: 0.6)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = max(1.0, cell * 0.04),
-      );
-      canvas.drawCircle(
-        Offset(bcx, bcy),
-        cell * 0.4,
-        Paint()..color = const Color(0xFFE53935),
-      );
-      canvas.drawCircle(
-        Offset(bcx - cell * 0.14, bcy - cell * 0.05),
-        cell * 0.09,
-        Paint()..color = Colors.white,
-      );
-      canvas.drawCircle(
-        Offset(bcx + cell * 0.14, bcy - cell * 0.05),
-        cell * 0.09,
-        Paint()..color = Colors.white,
-      );
-      canvas.drawCircle(
-        Offset(bcx - cell * 0.12, bcy - cell * 0.04),
-        cell * 0.045,
-        Paint()..color = Colors.black,
-      );
-      canvas.drawCircle(
-        Offset(bcx + cell * 0.16, bcy - cell * 0.04),
-        cell * 0.045,
-        Paint()..color = Colors.black,
       );
     }
 
@@ -2846,30 +2795,6 @@ class _MazeGameState extends State<MazeGame> {
       _restartLevel();
       return;
     }
-    _restartLevel();
-  }
-
-  Future<void> _showAdThenRetry() async {
-    final ad = _rewardedAd;
-    _rewardedAd = null;
-    if (ad == null) {
-      _restartLevel();
-      return;
-    }
-    ad.fullScreenContentCallback = FullScreenContentCallback(
-      onAdDismissedFullScreenContent: (a) {
-        a.dispose();
-        _loadRewardedAd();
-      },
-      onAdFailedToShowFullScreenContent: (a, error) {
-        a.dispose();
-        _loadRewardedAd();
-      },
-    );
-    try {
-      await ad.show(onUserEarnedReward: (_, _) {});
-    } catch (_) {}
-    if (!mounted) return;
     _restartLevel();
   }
 
