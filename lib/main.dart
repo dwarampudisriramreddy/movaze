@@ -1767,27 +1767,18 @@ class Maze {
   List<(int, int)> hideSpotCells() {
     final onRoute = {for (final p in patrolRoute) p};
     final spots = <(int, int)>[];
-    for (var i = 0; i < patrolRoute.length; i++) {
-      final (r, c) = patrolRoute[i];
-      final cell = cells[r][c];
-      // Check each neighbour for a dead-end leaf (hide spot).
-      void check(int nr, int nc) {
-        if (nr < 0 || nr >= size || nc < 0 || nc >= size) return;
-        if (onRoute.contains((nr, nc))) return;
-        if (nr == size - 1 && nc == size - 1) return;
-        final n = cells[nr][nc];
+    for (var r = 0; r < size; r++) {
+      for (var c = 0; c < size; c++) {
+        if ((r == 0 && c == 0) || (r == size - 1 && c == size - 1)) continue;
+        if (onRoute.contains((r, c))) continue;
+        final n = cells[r][c];
         var open = 0;
         if (!n.top) open++;
         if (!n.bottom) open++;
         if (!n.left) open++;
         if (!n.right) open++;
-        if (open == 1) spots.add((nr, nc));
+        if (open == 1) spots.add((r, c));
       }
-
-      if (!cell.top) check(r - 1, c);
-      if (!cell.bottom) check(r + 1, c);
-      if (!cell.left) check(r, c - 1);
-      if (!cell.right) check(r, c + 1);
     }
     return spots;
   }
@@ -3345,46 +3336,53 @@ class _MazeGameState extends State<MazeGame> {
                 ),
               ),
               Expanded(
-                child: Center(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      AspectRatio(
-                        aspectRatio: 1,
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: ClipRect(
-                            child: CustomPaint(
-                              painter: MazePainter(
-                                maze: _maze,
-                                fg: scheme.onSurface,
-                                bg: scheme.surface,
-                                zoom: _zoom,
-                                repaint: _revision,
-                                guidedPath: _showGuidedPath ? _maze.solutionPathCells() : null,
-                                hideSpots: _showHideSpots ? _maze.hideSpotCells().toSet() : null,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final side = min(constraints.maxWidth - 40,
+                        constraints.maxHeight - 8);
+                    return Center(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          SizedBox(
+                            width: side,
+                            height: side,
+                            child: Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: ClipRect(
+                                child: CustomPaint(
+                                  painter: MazePainter(
+                                    maze: _maze,
+                                    fg: scheme.onSurface,
+                                    bg: scheme.surface,
+                                    zoom: _zoom,
+                                    repaint: _revision,
+                                    guidedPath: _showGuidedPath ? _maze.solutionPathCells() : null,
+                                    hideSpots: _showHideSpots ? _maze.hideSpotCells().toSet() : null,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _ZoomButton(
-                            icon: Icons.add,
-                            onTap: _zoomIn,
-                          ),
-                          _ZoomButton(
-                            icon: Icons.remove,
-                            onTap: _zoomOut,
+                          const SizedBox(width: 4),
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _ZoomButton(
+                                icon: Icons.add,
+                                onTap: _zoomIn,
+                              ),
+                              _ZoomButton(
+                                icon: Icons.remove,
+                                onTap: _zoomOut,
+                              ),
+                            ],
                           ),
                         ],
                       ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
               ),
               Divider(color: scheme.onSurface, height: 12, thickness: 1),
